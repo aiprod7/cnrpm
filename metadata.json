@@ -1,0 +1,7 @@
+{
+  "name": "VoxLux",
+  "description": "Premium Voice AI Telegram Mini App featuring a sleek black aesthetic and real-time Russian voice interaction.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
