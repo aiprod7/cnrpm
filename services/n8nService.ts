@@ -20,7 +20,6 @@ export const sendQueryToN8n = async (query: string, userId: string = "unknown"):
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': 'your-shared-secret-key', // Ensure this matches server
       },
       body: JSON.stringify({
         userId,
@@ -33,18 +32,41 @@ export const sendQueryToN8n = async (query: string, userId: string = "unknown"):
 
     clearTimeout(timeoutId);
 
+    // Check for Server Errors (500, 404, etc)
     if (!response.ok) {
-      throw new Error(`Server responded with ${response.status}`);
+      console.warn(`N8n Server Error: ${response.status} ${response.statusText}`);
+      return {
+          aiResponse: "Прошу прощения, на сервере произошла техническая ошибка. Пожалуйста, попробуйте позже.",
+          meta: { shouldSpeak: true }
+      };
     }
 
-    const data = await response.json();
-    return data as N8nResponse;
+    // Handle response safely. N8n might return JSON or plain text.
+    const textData = await response.text();
+    let data: any;
+
+    try {
+        data = JSON.parse(textData);
+    } catch (e) {
+        // If n8n returns plain text (e.g., "Workflow started"), wrap it.
+        console.warn("N8n returned non-JSON response:", textData);
+        data = {
+            aiResponse: textData || "Запрос отправлен.",
+            meta: { shouldSpeak: true }
+        };
+    }
+
+    // Ensure structure matches N8nResponse
+    return {
+        aiResponse: data.aiResponse || (typeof data === 'string' ? data : (data.message || "Ответ получен.")),
+        meta: data.meta || { shouldSpeak: true }
+    };
 
   } catch (error) {
-    console.error("N8n API Error:", error);
-    // Fallback response as requested
+    console.error("N8n API Connection Error:", error);
+    
     return {
-      aiResponse: "Извините, не могу обработать запрос. Пожалуйста, попробуйте еще раз.",
+      aiResponse: "Не удалось соединиться с сервером. Проверьте интернет или попробуйте позже.",
       meta: { shouldSpeak: true }
     };
   }

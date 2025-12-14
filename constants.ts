@@ -4,8 +4,8 @@ export const GREETING_TEXT = "Привет, чем я могу Вам сегод
 
 // N8N Configuration
 // In a real deployment, these should be handled securely or proxied.
-export const USE_MOCK_BACKEND = true; // Set to false when backend is running
-export const BACKEND_API_URL = "/api/chat"; 
+export const USE_MOCK_BACKEND = false; // Disabled Mock Mode for live testing
+export const BACKEND_API_URL = "https://n8n.dinar80.ru/webhook-test/2067eedb-d0f5-47d1-bae0-7a05b33b5bb9"; 
 
 export const VISUALIZER_COLOR_PRIMARY = "rgba(255, 255, 255, 0.9)";
 export const VISUALIZER_COLOR_SECONDARY = "rgba(100, 100, 100, 0.4)";
