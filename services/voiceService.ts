@@ -17,7 +17,16 @@ async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
+  // Ensure we are reading the buffer correctly aligned
+  // Safety check for byte length
+  if (data.byteLength % 2 !== 0) {
+      // Pad with one zero byte if odd (shouldn't happen for valid PCM16)
+      const newData = new Uint8Array(data.byteLength + 1);
+      newData.set(data);
+      data = newData;
+  }
+
+  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
@@ -42,7 +51,7 @@ export class VoiceService {
 
   constructor() {
     // Initialize Google GenAI
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
     
     // Initialize Speech Recognition (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -138,7 +147,7 @@ export class VoiceService {
     }
   }
 
-  // --- Text To Speech (Google GenAI) ---
+  // --- Google Gemini Text To Speech Only ---
 
   async speak(text: string): Promise<void> {
     if (!text) return;
@@ -147,11 +156,71 @@ export class VoiceService {
     if (!this.audioContext || this.audioContext.state === 'closed') {
         this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
     }
+    
+    // Critical: Resume context. If this fails (no user gesture), 
+    // we must catch it or the app hangs in 'SPEAKING' state.
     if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
+        try {
+            await this.audioContext.resume();
+        } catch (e) {
+            console.warn("AudioContext resume failed (likely no user interaction). Skipping TTS.", e);
+            return; // Exit immediately so we don't hang
+        }
     }
 
     try {
-        // Generate Audio from Gemini
         const response = await this.ai.models.generateContent({
-          model:
+          model: "gemini-2.5-flash-preview-tts",
+          contents: [{ parts: [{ text }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: 'Kore' }, 
+                },
+            },
+          },
+        });
+
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        
+        if (!base64Audio) {
+            console.warn("No audio data received from Gemini TTS");
+            return;
+        }
+
+        // Decode PCM
+        const audioBuffer = await decodeAudioData(
+            decode(base64Audio),
+            this.audioContext,
+            24000,
+            1
+        );
+
+        // Play Audio
+        return new Promise((resolve, reject) => {
+            if (!this.audioContext) { 
+                resolve(); // Resolve instead of reject to allow app to continue
+                return; 
+            }
+            
+            const source = this.audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(this.audioContext.destination);
+            
+            source.onended = () => {
+                resolve();
+            };
+            
+            source.start();
+        });
+
+    } catch (error) {
+        console.error("Gemini TTS Error:", error);
+        // We resolve smoothly to avoid hanging the app state even on error
+        return;
+    }
+  }
+}
+
+export const voiceService = new VoiceService();

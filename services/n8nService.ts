@@ -52,10 +52,29 @@ export const sendQueryToN8n = async (query: string, userId: string = "unknown"):
 
 // Mock function for preview environment
 const mockN8nResponse = async (query: string): Promise<N8nResponse> => {
-  await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate network delay
+  // Simulate variable network delay (1-2 seconds)
+  const delay = 1000 + Math.random() * 1000;
+  await new Promise(resolve => setTimeout(resolve, delay));
   
+  const lowerQuery = query.toLowerCase();
+  let responseText = "";
+
+  // Simple keyword matching for demo purposes
+  if (lowerQuery.includes("привет") || lowerQuery.includes("здравствуй")) {
+    responseText = "Здравствуйте! Рада Вас слышать. Чем я могу быть полезна сегодня?";
+  } else if (lowerQuery.includes("цена") || lowerQuery.includes("стоит")) {
+    responseText = "Стоимость наших услуг зависит от выбранного пакета. Базовый тариф начинается от пяти тысяч рублей.";
+  } else if (lowerQuery.includes("запис") || lowerQuery.includes("бронир")) {
+    responseText = "Я с удовольствием запишу Вас. На какой день и время Вам было бы удобно?";
+  } else if (lowerQuery.includes("пока") || lowerQuery.includes("до свидания")) {
+    responseText = "Всего доброго! Буду ждать нашей следующей встречи.";
+  } else {
+    // Default echo for unknown queries
+    responseText = `Я услышала: "${query}". В демонстрационном режиме я пока не знаю ответа на этот вопрос, но я учусь.`;
+  }
+
   return {
-    aiResponse: `Я поняла Ваш запрос: "${query}". В настоящее время я работаю в демонстрационном режиме, но я готова интегрироваться с Вашей системой автоматизации.`,
+    aiResponse: responseText,
     meta: { shouldSpeak: true }
   };
 };

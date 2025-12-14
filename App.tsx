@@ -30,7 +30,7 @@ const App: React.FC = () => {
     if (hasGreetingPlayed.current) return;
     hasGreetingPlayed.current = true;
 
-    // 2. Always show greeting, regardless of platform
+    // 2. Show greeting text only (No Auto-Speak to prevent blocking)
     setMessages([{
       id: 'init',
       role: 'model',
@@ -38,23 +38,9 @@ const App: React.FC = () => {
       timestamp: new Date()
     }]);
 
-    // 3. Attempt to speak the greeting
-    // Note: Autoplay policies might block this without user interaction on some browsers.
-    const speakGreeting = async () => {
-        // Small delay to ensure UI mount
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        setAppState(AppState.SPEAKING);
-        try {
-            await voiceService.speak(GREETING_TEXT);
-        } catch (e) {
-            console.warn("Auto-greeting might be blocked by browser policy:", e);
-        } finally {
-            setAppState(AppState.IDLE);
-        }
-    };
-
-    speakGreeting();
+    // We do NOT call speakGreeting() here anymore. 
+    // Browsers block AudioContext autoplay without user gesture, 
+    // causing the app to get stuck in "SPEAKING" state.
   }, []);
 
   const handleMicButton = async () => {
@@ -121,10 +107,15 @@ const App: React.FC = () => {
       };
       setMessages(prev => [...prev, botMsg]);
 
-      // 6. Speak Response (TTS)
+      // 6. Speak Response (TTS) - ONLY if shouldSpeak is true
       if (result.meta.shouldSpeak) {
           setAppState(AppState.SPEAKING);
-          await voiceService.speak(result.aiResponse);
+          try {
+            await voiceService.speak(result.aiResponse);
+          } catch (speakError) {
+             console.error("Speaking failed:", speakError);
+             // Swallow error to ensure we return to IDLE
+          }
       }
 
       setAppState(AppState.IDLE);
