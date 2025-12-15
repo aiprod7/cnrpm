@@ -51,7 +51,9 @@ export class VoiceService {
 
   constructor() {
     // Initialize Google GenAI
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
+    this.ai = new GoogleGenAI({ apiKey });
     
     // Initialize Speech Recognition (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -86,23 +88,29 @@ export class VoiceService {
 
   // --- Microphone & Visualizer ---
 
-  async startAudioAnalysis(): Promise<AnalyserNode> {
-    // Reuse prepare logic to ensure context exists
-    await this.prepareForSpeech();
-    
-    if (!this.audioContext) {
-        throw new Error("AudioContext failed to initialize");
+  async startAudioAnalysis(): Promise<AnalyserNode | null> {
+    try {
+      // Reuse prepare logic to ensure context exists
+      await this.prepareForSpeech();
+      
+      if (!this.audioContext) {
+          console.warn("AudioContext failed to initialize");
+          return null;
+      }
+      
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.microphone = this.audioContext.createMediaStreamSource(this.stream);
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      
+      this.microphone.connect(this.analyser);
+      // Note: Do not connect to destination to avoid feedback loop
+      
+      return this.analyser;
+    } catch (error) {
+      console.warn("Could not start audio analysis (microphone access):", error);
+      return null;
     }
-    
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    this.microphone = this.audioContext.createMediaStreamSource(this.stream);
-    this.analyser = this.audioContext.createAnalyser();
-    this.analyser.fftSize = 256;
-    
-    this.microphone.connect(this.analyser);
-    // Note: Do not connect to destination to avoid feedback loop
-    
-    return this.analyser;
   }
 
   stopAudioAnalysis() {
@@ -230,7 +238,8 @@ export class VoiceService {
 
     } catch (error) {
         console.error("Gemini TTS Error:", error);
-        return;
+        // Re-throw to let caller handle it
+        throw error;
     }
   }
 }

@@ -135,7 +135,9 @@ const App: React.FC = () => {
     try {
       // AudioContext is initialized/resumed here (direct click)
       const audioAnalyser = await voiceService.startAudioAnalysis();
-      setAnalyser(audioAnalyser);
+      if (audioAnalyser) {
+        setAnalyser(audioAnalyser);
+      }
       setAppState(AppState.LISTENING);
       tg?.HapticFeedback.impactOccurred('medium');
 
