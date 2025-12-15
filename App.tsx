@@ -120,6 +120,9 @@ const App: React.FC = () => {
     tg?.HapticFeedback.notificationOccurred('success');
   };
 
+  // State for speech recognition support warning
+  const [showSpeechWarning, setShowSpeechWarning] = useState(false);
+
   // --- Voice Handlers ---
   const handleMicButton = async () => {
     if (appState === AppState.LISTENING) {
@@ -127,6 +130,14 @@ const App: React.FC = () => {
        return;
     }
     if (appState === AppState.IDLE) {
+       // Check if speech recognition is supported
+       if (!voiceService.isSpeechRecognitionSupported()) {
+         console.warn("Speech Recognition not supported, showing warning");
+         setShowSpeechWarning(true);
+         tg?.HapticFeedback.notificationOccurred('warning');
+         setTimeout(() => setShowSpeechWarning(false), 5000);
+         return;
+       }
        await runVoiceConversation();
     }
   };
@@ -362,6 +373,13 @@ const App: React.FC = () => {
       {appState === AppState.ERROR && (
          <div className="absolute top-0 left-0 w-full p-4 bg-red-900/90 text-white text-center text-sm z-50 backdrop-blur-sm">
             Operation failed. Please check permissions or network.
+         </div>
+      )}
+      
+      {/* Speech Recognition Warning */}
+      {showSpeechWarning && (
+         <div className="absolute top-0 left-0 w-full p-4 bg-yellow-700/90 text-white text-center text-sm z-50 backdrop-blur-sm">
+            Голосовой ввод недоступен в этом браузере. Используйте текстовый режим.
          </div>
       )}
     </div>

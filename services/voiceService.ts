@@ -63,7 +63,15 @@ export class VoiceService {
       this.recognition.interimResults = false;
       this.recognition.lang = 'ru-RU';
       this.recognition.maxAlternatives = 1;
+      console.log("SpeechRecognition API available");
+    } else {
+      console.warn("SpeechRecognition API NOT available in this browser/WebView");
     }
+  }
+
+  // Check if speech recognition is supported
+  isSpeechRecognitionSupported(): boolean {
+    return this.recognition !== null;
   }
 
   // --- Audio Context Management ---
