@@ -19,8 +19,11 @@ const App: React.FC = () => {
   const [inputError, setInputError] = useState<string | null>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Ref to prevent double greeting in React Strict Mode (dev)
+  // Refs for stability in effects
+  const inputTextRef = useRef(inputText);
   const hasGreetingPlayed = useRef(false);
+
+  useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
 
   // Initialize Telegram WebApp & Greeting
   useEffect(() => {
@@ -29,6 +32,15 @@ const App: React.FC = () => {
       const app = window.Telegram.WebApp;
       app.ready();
       app.expand();
+      
+      try {
+        // Set Header to Black to match app theme
+        app.setHeaderColor('#000000');
+        app.setBackgroundColor('#000000');
+      } catch (e) {
+        console.warn("Failed to set TG colors", e);
+      }
+      
       document.body.style.backgroundColor = '#000000';
       setTg(app);
     }
@@ -156,10 +168,12 @@ const App: React.FC = () => {
   };
 
   const handleTextSubmit = async () => {
-      if (!inputText.trim()) return;
+      // Use ref to get current value if called from closure
+      const text = inputTextRef.current;
+      if (!text.trim()) return;
 
       // Cyrillic Validation: Check if string contains at least one Cyrillic character
-      const hasCyrillic = /[а-яА-ЯёЁ]/.test(inputText);
+      const hasCyrillic = /[а-яА-ЯёЁ]/.test(text);
       if (!hasCyrillic) {
           setInputError("Пожалуйста, введите вопрос на русском языке.");
           tg?.HapticFeedback.notificationOccurred('warning');
@@ -167,8 +181,12 @@ const App: React.FC = () => {
       }
       
       setInputError(null);
-      await processQuery(inputText, 'text');
+      await processQuery(text, 'text');
   };
+
+  // Keep a stable ref to the submit handler for the useEffect below
+  const submitHandlerRef = useRef(handleTextSubmit);
+  useEffect(() => { submitHandlerRef.current = handleTextSubmit; }, [handleTextSubmit]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -176,6 +194,53 @@ const App: React.FC = () => {
           handleTextSubmit();
       }
   };
+
+  // --- Telegram MainButton Integration ---
+  useEffect(() => {
+    if (!tg) return;
+    const mainBtn = tg.MainButton;
+
+    // Show progress if processing
+    if (appState === AppState.PROCESSING) {
+        mainBtn.showProgress(false); // keep active? false usually means just spinner
+    } else {
+        mainBtn.hideProgress();
+    }
+
+    // Update visibility based on text content only in text mode
+    if (isTextMode && inputText.trim().length > 0) {
+        if (appState === AppState.IDLE) mainBtn.show();
+    } else {
+        if (appState !== AppState.PROCESSING) mainBtn.hide(); 
+        // Note: we don't hide immediately if processing, so user sees spinner
+    }
+  }, [tg, isTextMode, inputText, appState]);
+
+  useEffect(() => {
+    if (!tg) return;
+    const mainBtn = tg.MainButton;
+
+    const onMainBtnClick = () => {
+        submitHandlerRef.current();
+    };
+
+    if (isTextMode) {
+        mainBtn.setText("ОТПРАВИТЬ");
+        // Enforce white text on black or standard
+        mainBtn.textColor = "#000000";
+        mainBtn.color = "#ffffff";
+        mainBtn.onClick(onMainBtnClick);
+    } else {
+        mainBtn.offClick(onMainBtnClick);
+        mainBtn.hide();
+    }
+
+    return () => {
+        mainBtn.offClick(onMainBtnClick);
+        mainBtn.hide();
+    };
+  }, [tg, isTextMode]);
+
 
   return (
     <div className="relative h-screen w-screen flex flex-col font-sans overflow-hidden text-white">
@@ -222,17 +287,10 @@ const App: React.FC = () => {
                             placeholder="Напишите ваш вопрос на русском..."
                             className="w-full bg-transparent text-white p-4 text-base outline-none resize-none h-24 placeholder-gray-400 font-light"
                          />
-                         <div className="flex justify-between items-center px-4 pb-3">
-                             <span className="text-xs text-red-400 h-4 truncate pr-2">{inputError}</span>
-                             <button 
-                                onClick={handleTextSubmit}
-                                disabled={!inputText.trim() || appState !== AppState.IDLE}
-                                className={`rounded-full p-2 bg-white text-black transition-all ${(!inputText.trim() || appState !== AppState.IDLE) ? 'opacity-50' : 'hover:scale-105 active:scale-95'}`}
-                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                    <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-                                </svg>
-                             </button>
+                         {/* Validation Message */}
+                         <div className="flex justify-between items-center px-4 pb-3 min-h-[1.5rem]">
+                             <span className="text-xs text-red-400 w-full truncate">{inputError}</span>
+                             {/* Removed custom Send button in favor of MainButton */}
                          </div>
                     </div>
                     <button 

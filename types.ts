@@ -19,6 +19,8 @@ export interface TelegramWebApp {
   viewportStableHeight: number;
   headerColor: string;
   backgroundColor: string;
+  setHeaderColor: (color: string) => void;
+  setBackgroundColor: (color: string) => void;
   isPerformanceClass?: () => boolean;
   BackButton: {
     isVisible: boolean;
@@ -50,6 +52,8 @@ export interface TelegramWebApp {
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
     selectionChanged: () => void;
   };
+  enableClosingConfirmation: () => void;
+  disableClosingConfirmation: () => void;
   ready: () => void;
   expand: () => void;
   close: () => void;
