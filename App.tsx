@@ -66,6 +66,9 @@ const App: React.FC = () => {
 
   // --- Shared Processing Logic ---
   const processQuery = async (text: string, inputType: 'voice' | 'text') => {
+    console.log(`📝 [Process] processQuery() called with inputType: ${inputType}`);
+    console.log(`📝 [Process] Query text: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+    
     if (!text.trim()) return;
 
     // 1. Update Transcript (User)
@@ -79,6 +82,8 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, userMsg]);
 
     // 2. Send to n8n (Processing)
+    console.log("🔄 [Process] Sending to n8n...");
+    const n8nStart = performance.now();
     setAppState(AppState.PROCESSING);
     
     // Clear text input if in text mode
@@ -88,6 +93,7 @@ const App: React.FC = () => {
 
     try {
         const result = await sendQueryToN8n(text, tg?.initDataUnsafe?.user?.id?.toString(), inputType);
+        console.log(`🔄 [Process] n8n response received in ${performance.now() - n8nStart}ms`);
         
         // 3. Update Transcript (Model)
         const botMsg: ChatMessage = {
@@ -139,10 +145,13 @@ const App: React.FC = () => {
 
   // --- Voice Handlers ---
   const handleMicButton = async () => {
+    console.log(`🎤 [Button] handleMicButton() clicked, current state: ${appState}`);
+    
     // Request mic permission on first click (will only prompt once)
     await requestMicPermission();
     
     if (appState === AppState.LISTENING) {
+       console.log("🛑 [Button] Currently listening, stopping...");
        voiceService.stopListening();
        return;
     }
@@ -172,9 +181,15 @@ const App: React.FC = () => {
   };
 
   const runVoiceConversation = async () => {
+    const flowStart = performance.now();
+    console.log("🎙️ [Flow] runVoiceConversation() started");
+    
     try {
       // AudioContext is initialized/resumed here (direct click)
+      console.log("📊 [Flow] Starting audio analysis...");
       const audioAnalyser = await voiceService.startAudioAnalysis();
+      console.log(`📊 [Flow] Audio analysis ready: ${performance.now() - flowStart}ms`);
+      
       if (audioAnalyser) {
         setAnalyser(audioAnalyser);
       }
@@ -183,7 +198,11 @@ const App: React.FC = () => {
 
       let transcript = "";
       try {
+        console.log("👂 [Flow] Starting listen()...");
+        const listenStart = performance.now();
         transcript = await voiceService.listen();
+        console.log(`👂 [Flow] listen() completed in ${performance.now() - listenStart}ms`);
+        console.log(`👂 [Flow] Transcript received: "${transcript}"`);
       } catch (err) {
         console.warn("Speech recognition error:", err);
       }
@@ -192,10 +211,12 @@ const App: React.FC = () => {
       setAnalyser(null);
 
       if (!transcript) {
+        console.log("⚠️ [Flow] Empty transcript, returning to IDLE");
         setAppState(AppState.IDLE);
         return;
       }
 
+      console.log(`✅ [Flow] Voice recognition completed in ${performance.now() - flowStart}ms total`);
       await processQuery(transcript, 'voice');
 
     } catch (e) {

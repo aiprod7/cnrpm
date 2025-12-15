@@ -274,26 +274,44 @@ export class VoiceService {
   // --- Speech To Text (using AudioContext + Gemini) ---
 
   listen(): Promise<string> {
+    const startTime = performance.now();
+    console.log("🎤 [STT] listen() called at", new Date().toISOString());
+    
     return new Promise(async (resolve, reject) => {
       // Try Web Speech API first if available (more reliable when it works)
       if (this.recognition) {
+        console.log("🎤 [STT] Trying Web Speech API first...");
         try {
+          const webSpeechStart = performance.now();
           const transcript = await this.listenWithWebSpeech();
+          const webSpeechTime = performance.now() - webSpeechStart;
+          console.log(`🎤 [STT] Web Speech API completed in ${webSpeechTime.toFixed(0)}ms, result: "${transcript}"`);
           if (transcript) {
+            const totalTime = performance.now() - startTime;
+            console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms`);
             resolve(transcript);
             return;
           }
+          console.log("🎤 [STT] Web Speech API returned empty, falling back to Gemini");
         } catch (error) {
-          console.warn("Web Speech API failed, trying Gemini STT:", error);
+          console.warn("🎤 [STT] Web Speech API failed, trying Gemini STT:", error);
         }
+      } else {
+        console.log("🎤 [STT] Web Speech API not available, using Gemini directly");
       }
       
       // Fallback to AudioContext + Gemini STT
       try {
+        console.log("🎤 [STT] Starting Gemini STT...");
+        const geminiStart = performance.now();
         const transcript = await this.listenWithGemini();
+        const geminiTime = performance.now() - geminiStart;
+        console.log(`🎤 [STT] Gemini STT setup completed in ${geminiTime.toFixed(0)}ms`);
+        const totalTime = performance.now() - startTime;
+        console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
         resolve(transcript);
       } catch (error) {
-        console.error("Gemini STT failed:", error);
+        console.error("❌ [STT] Gemini STT failed:", error);
         resolve(""); // Return empty string on error
       }
     });
@@ -301,29 +319,42 @@ export class VoiceService {
 
   // AudioContext + Gemini STT implementation (records WAV)
   private async listenWithGemini(): Promise<string> {
+    console.log("🎙️ [Gemini STT] listenWithGemini() started");
+    const startTime = performance.now();
+    
     return new Promise(async (resolve, reject) => {
       try {
         // Ensure AudioContext exists
+        console.log("🎙️ [Gemini STT] Step 1: Preparing AudioContext...");
+        const prepareStart = performance.now();
         await this.prepareForSpeech();
+        console.log(`🎙️ [Gemini STT] AudioContext prepared in ${(performance.now() - prepareStart).toFixed(0)}ms`);
         
         if (!this.audioContext) {
+          console.error("❌ [Gemini STT] AudioContext is null!");
           reject(new Error("AudioContext not available"));
           return;
         }
+        console.log(`🎙️ [Gemini STT] AudioContext state: ${this.audioContext.state}, sampleRate: ${this.audioContext.sampleRate}`);
 
         // Use cached stream to avoid repeated permission prompts
+        console.log("🎙️ [Gemini STT] Step 2: Getting microphone stream...");
+        const micStart = performance.now();
         const stream = await this.requestMicrophoneAccess();
+        console.log(`🎙️ [Gemini STT] Microphone access took ${(performance.now() - micStart).toFixed(0)}ms`);
+        
         if (!stream) {
+          console.error("❌ [Gemini STT] No microphone stream!");
           reject(new Error("Microphone access not granted"));
           return;
         }
+        console.log(`🎙️ [Gemini STT] Stream active: ${stream.active}, tracks: ${stream.getTracks().length}`);
 
         // Create audio source from microphone
+        console.log("🎙️ [Gemini STT] Step 3: Creating audio nodes...");
         const source = this.audioContext.createMediaStreamSource(stream);
         
         // Create script processor to capture raw PCM
-        // Note: ScriptProcessorNode is deprecated but works everywhere
-        // AudioWorklet is better but more complex
         const bufferSize = 4096;
         this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
         
@@ -331,22 +362,30 @@ export class VoiceService {
         this.isRecording = true;
         this.recordingResolve = resolve;
 
+        let sampleCount = 0;
         this.scriptProcessor.onaudioprocess = (e) => {
           if (this.isRecording) {
             const inputData = e.inputBuffer.getChannelData(0);
-            // Clone the data as it gets reused
             this.recordedSamples.push(new Float32Array(inputData));
+            sampleCount++;
+            // Log every 10 chunks (~1 second at 4096 buffer)
+            if (sampleCount % 10 === 0) {
+              const duration = (this.recordedSamples.length * bufferSize / (this.audioContext?.sampleRate || 44100)).toFixed(1);
+              console.log(`🎙️ [Recording] ${duration}s recorded (${this.recordedSamples.length} chunks)`);
+            }
           }
         };
 
-        // Connect: source -> scriptProcessor -> destination (required for processing)
+        // Connect: source -> scriptProcessor -> destination
         source.connect(this.scriptProcessor);
         this.scriptProcessor.connect(this.audioContext.destination);
         
-        console.log("Recording started with AudioContext (WAV format)...");
+        const setupTime = performance.now() - startTime;
+        console.log(`🎙️ [Gemini STT] Recording setup complete in ${setupTime.toFixed(0)}ms - NOW RECORDING...`);
+        console.log("🎙️ [Gemini STT] Waiting for stopListening() to be called...");
 
       } catch (error) {
-        console.error("Failed to start recording:", error);
+        console.error("❌ [Gemini STT] Failed to start recording:", error);
         reject(error);
       }
     });
@@ -354,13 +393,18 @@ export class VoiceService {
 
   // Process recorded audio and send to Gemini
   private async processRecordedAudio(): Promise<string> {
+    const startTime = performance.now();
+    console.log("📤 [Process] processRecordedAudio() started");
+    
     if (this.recordedSamples.length === 0) {
-      console.log("No audio recorded");
+      console.log("⚠️ [Process] No audio recorded (0 chunks)");
       return "";
     }
 
     try {
       // Combine all samples into one Float32Array
+      console.log("📤 [Process] Step 1: Combining audio chunks...");
+      const combineStart = performance.now();
       const totalLength = this.recordedSamples.reduce((acc, arr) => acc + arr.length, 0);
       const combinedSamples = new Float32Array(totalLength);
       
@@ -369,30 +413,51 @@ export class VoiceService {
         combinedSamples.set(samples, offset);
         offset += samples.length;
       }
+      
+      const sampleRate = this.audioContext?.sampleRate || 44100;
+      const durationSec = totalLength / sampleRate;
+      console.log(`📤 [Process] Combined ${this.recordedSamples.length} chunks in ${(performance.now() - combineStart).toFixed(0)}ms`);
+      console.log(`📤 [Process] Audio: ${totalLength} samples, ${durationSec.toFixed(2)}s duration, ${sampleRate}Hz`);
 
-      console.log("Total recorded samples:", totalLength, "Duration:", (totalLength / (this.audioContext?.sampleRate || 44100)).toFixed(2), "seconds");
+      // Check if audio is too short
+      if (durationSec < 0.5) {
+        console.log("⚠️ [Process] Audio too short (<0.5s), skipping transcription");
+        return "";
+      }
 
       // Convert to WAV format
-      const sampleRate = this.audioContext?.sampleRate || 44100;
+      console.log("📤 [Process] Step 2: Converting to WAV...");
+      const wavStart = performance.now();
       const wavData = float32ToWav(combinedSamples, sampleRate);
-      
-      console.log("WAV data size:", wavData.length, "bytes");
+      console.log(`📤 [Process] WAV conversion took ${(performance.now() - wavStart).toFixed(0)}ms, size: ${(wavData.length / 1024).toFixed(1)}KB`);
 
       // Convert to base64
+      console.log("📤 [Process] Step 3: Encoding to base64...");
+      const encodeStart = performance.now();
       const base64Audio = encode(wavData);
+      console.log(`📤 [Process] Base64 encoding took ${(performance.now() - encodeStart).toFixed(0)}ms, size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
 
       // Send to Gemini for transcription
-      return await this.transcribeWithGemini(base64Audio);
+      console.log("📤 [Process] Step 4: Sending to Gemini API...");
+      const result = await this.transcribeWithGemini(base64Audio);
+      
+      const totalTime = performance.now() - startTime;
+      console.log(`✅ [Process] Total processing time: ${totalTime.toFixed(0)}ms`);
+      return result;
     } catch (error) {
-      console.error("Error processing recorded audio:", error);
+      console.error("❌ [Process] Error processing recorded audio:", error);
       return "";
     }
   }
 
   // Transcribe audio using Gemini (expects WAV base64)
   private async transcribeWithGemini(base64Audio: string): Promise<string> {
+    const startTime = performance.now();
+    console.log(`🤖 [Gemini API] transcribeWithGemini() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
+    
     try {
-      console.log("Sending WAV audio to Gemini for transcription...");
+      console.log("🤖 [Gemini API] Sending request to gemini-2.5-flash...");
+      const apiStart = performance.now();
       
       const response = await this.ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -410,12 +475,32 @@ export class VoiceService {
           ]
         }]
       });
+      
+      const apiTime = performance.now() - apiStart;
+      console.log(`🤖 [Gemini API] Response received in ${apiTime.toFixed(0)}ms`);
+      
+      // Log response details
+      console.log("🤖 [Gemini API] Response structure:", {
+        hasCandidates: !!response.candidates,
+        candidatesCount: response.candidates?.length || 0,
+        hasContent: !!response.candidates?.[0]?.content,
+        partsCount: response.candidates?.[0]?.content?.parts?.length || 0
+      });
 
       const transcript = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-      console.log("Gemini transcription result:", transcript);
+      const totalTime = performance.now() - startTime;
+      console.log(`✅ [Gemini API] Transcription complete in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
+      
       return transcript;
-    } catch (error) {
-      console.error("Gemini transcription error:", error);
+    } catch (error: any) {
+      const errorTime = performance.now() - startTime;
+      console.error(`❌ [Gemini API] Error after ${errorTime.toFixed(0)}ms:`, error);
+      console.error("❌ [Gemini API] Error details:", {
+        name: error?.name,
+        message: error?.message,
+        status: error?.status,
+        statusText: error?.statusText
+      });
       throw error;
     }
   }
@@ -461,30 +546,56 @@ export class VoiceService {
   }
 
   stopListening() {
+    const startTime = performance.now();
+    console.log("⏹️ [Stop] stopListening() called");
+    
     // Stop AudioContext recording
     if (this.scriptProcessor && this.isRecording) {
       this.isRecording = false;
       this.scriptProcessor.disconnect();
       this.scriptProcessor = null;
-      console.log("Recording stopped");
+      
+      const chunksRecorded = this.recordedSamples.length;
+      const sampleRate = this.audioContext?.sampleRate || 44100;
+      const durationSec = chunksRecorded > 0 
+        ? (this.recordedSamples.reduce((acc, arr) => acc + arr.length, 0) / sampleRate).toFixed(2) 
+        : "0";
+      console.log(`⏹️ [Stop] Recording stopped: ${chunksRecorded} chunks, ~${durationSec}s audio`);
       
       // Process the recorded audio
       if (this.recordingResolve) {
+        console.log("⏹️ [Stop] Starting audio processing...");
+        const processStart = performance.now();
         this.processRecordedAudio().then((transcript) => {
+          const processTime = performance.now() - processStart;
+          console.log(`⏹️ [Stop] Audio processing completed in ${processTime.toFixed(0)}ms`);
           if (this.recordingResolve) {
             this.recordingResolve(transcript);
             this.recordingResolve = null;
           }
+          const totalTime = performance.now() - startTime;
+          console.log(`✅ [Stop] Total stopListening() time: ${totalTime.toFixed(0)}ms`);
+        }).catch((error) => {
+          console.error("❌ [Stop] Audio processing failed:", error);
+          if (this.recordingResolve) {
+            this.recordingResolve("");
+            this.recordingResolve = null;
+          }
         });
+      } else {
+        console.log("⚠️ [Stop] No recordingResolve callback set!");
       }
+    } else {
+      console.log("⚠️ [Stop] Not recording (scriptProcessor:", !!this.scriptProcessor, "isRecording:", this.isRecording, ")");
     }
     
     // Stop Web Speech API if active
     if (this.recognition) {
       try {
+        console.log("⏹️ [Stop] Stopping Web Speech API...");
         this.recognition.stop();
       } catch (e) {
-        console.warn("Error stopping recognition", e);
+        console.warn("⚠️ [Stop] Error stopping recognition:", e);
       }
     }
   }
