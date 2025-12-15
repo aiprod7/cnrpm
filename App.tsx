@@ -133,6 +133,7 @@ const App: React.FC = () => {
 
   const runVoiceConversation = async () => {
     try {
+      // AudioContext is initialized/resumed here (direct click)
       const audioAnalyser = await voiceService.startAudioAnalysis();
       setAnalyser(audioAnalyser);
       setAppState(AppState.LISTENING);
@@ -175,6 +176,10 @@ const App: React.FC = () => {
   };
 
   const handleTextSubmit = async () => {
+      // CRITICAL FIX: "Warm up" AudioContext immediately inside the user event handler.
+      // This ensures the browser allows audio playback later when the network request finishes.
+      await voiceService.prepareForSpeech();
+
       // Use ref to get current value inside closures/callbacks
       const text = inputTextRef.current;
       if (!text.trim()) return;

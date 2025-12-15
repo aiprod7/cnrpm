@@ -64,12 +64,34 @@ export class VoiceService {
     }
   }
 
+  // --- Audio Context Management ---
+
+  /**
+   * Must be called synchronously within a user gesture (click/keypress).
+   * Ensures AudioContext is running before any async network calls.
+   */
+  async prepareForSpeech(): Promise<void> {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
+    }
+
+    if (this.audioContext.state === 'suspended') {
+        try {
+            await this.audioContext.resume();
+        } catch (e) {
+            console.warn("AudioContext resume failed in prepareForSpeech:", e);
+        }
+    }
+  }
+
   // --- Microphone & Visualizer ---
 
   async startAudioAnalysis(): Promise<AnalyserNode> {
-    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
-    if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
+    // Reuse prepare logic to ensure context exists
+    await this.prepareForSpeech();
+    
+    if (!this.audioContext) {
+        throw new Error("AudioContext failed to initialize");
     }
     
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -152,21 +174,12 @@ export class VoiceService {
   async speak(text: string): Promise<void> {
     if (!text) return;
 
-    // Ensure AudioContext is ready (reuse existing or create new)
-    if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
-    }
+    // Ensure AudioContext is ready.
+    // NOTE: This call might fail to resume if not triggered by user gesture,
+    // which is why prepareForSpeech() should be called earlier in the flow.
+    await this.prepareForSpeech();
     
-    // Critical: Resume context. If this fails (no user gesture), 
-    // we must catch it or the app hangs in 'SPEAKING' state.
-    if (this.audioContext.state === 'suspended') {
-        try {
-            await this.audioContext.resume();
-        } catch (e) {
-            console.warn("AudioContext resume failed (likely no user interaction). Skipping TTS.", e);
-            return; // Exit immediately so we don't hang
-        }
-    }
+    if (!this.audioContext) return;
 
     try {
         const response = await this.ai.models.generateContent({
@@ -200,7 +213,7 @@ export class VoiceService {
         // Play Audio
         return new Promise((resolve, reject) => {
             if (!this.audioContext) { 
-                resolve(); // Resolve instead of reject to allow app to continue
+                resolve(); 
                 return; 
             }
             
@@ -217,7 +230,6 @@ export class VoiceService {
 
     } catch (error) {
         console.error("Gemini TTS Error:", error);
-        // We resolve smoothly to avoid hanging the app state even on error
         return;
     }
   }
