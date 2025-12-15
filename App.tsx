@@ -122,9 +122,26 @@ const App: React.FC = () => {
 
   // State for speech recognition support warning
   const [showSpeechWarning, setShowSpeechWarning] = useState(false);
+  const [micPermissionRequested, setMicPermissionRequested] = useState(false);
+
+  // Request microphone permission on first user interaction
+  const requestMicPermission = async () => {
+    if (micPermissionRequested) return;
+    setMicPermissionRequested(true);
+    
+    // This will prompt for permission only once, then cache the stream
+    const stream = await voiceService.requestMicrophoneAccess();
+    if (stream) {
+      console.log("Microphone permission granted on first interaction");
+      tg?.HapticFeedback.impactOccurred('light');
+    }
+  };
 
   // --- Voice Handlers ---
   const handleMicButton = async () => {
+    // Request mic permission on first click (will only prompt once)
+    await requestMicPermission();
+    
     if (appState === AppState.LISTENING) {
        voiceService.stopListening();
        return;
@@ -138,6 +155,18 @@ const App: React.FC = () => {
          setTimeout(() => setShowSpeechWarning(false), 5000);
          return;
        }
+       
+       // Check if we have mic permission
+       if (!voiceService.hasMicrophonePermission()) {
+         const stream = await voiceService.requestMicrophoneAccess();
+         if (!stream) {
+           setShowSpeechWarning(true);
+           tg?.HapticFeedback.notificationOccurred('warning');
+           setTimeout(() => setShowSpeechWarning(false), 5000);
+           return;
+         }
+       }
+       
        await runVoiceConversation();
     }
   };
@@ -376,10 +405,12 @@ const App: React.FC = () => {
          </div>
       )}
       
-      {/* Speech Recognition Warning */}
+      {/* Speech Recognition / Microphone Warning */}
       {showSpeechWarning && (
          <div className="absolute top-0 left-0 w-full p-4 bg-yellow-700/90 text-white text-center text-sm z-50 backdrop-blur-sm">
-            Голосовой ввод недоступен в этом браузере. Используйте текстовый режим.
+            {voiceService.hasMicrophonePermission() 
+              ? "Голосовой ввод недоступен. Используйте текстовый режим."
+              : "Разрешите доступ к микрофону для голосового ввода или используйте текст."}
          </div>
       )}
     </div>

@@ -109,6 +109,9 @@ export class VoiceService {
   private recordedSamples: Float32Array[] = [];
   private isRecording: boolean = false;
   private recordingResolve: ((transcript: string) => void) | null = null;
+  
+  // Permission cache - to avoid repeated browser permission prompts
+  private microphonePermissionGranted: boolean = false;
 
   constructor() {
     // Initialize Google GenAI
@@ -119,6 +122,9 @@ export class VoiceService {
     // Log available APIs
     console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
     console.log("AudioContext available:", typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined');
+    
+    // Check microphone permission status on init
+    this.checkMicrophonePermission();
     
     // Initialize Speech Recognition as fallback (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -132,6 +138,59 @@ export class VoiceService {
     } else {
       console.log("SpeechRecognition API NOT available - using AudioContext + Gemini");
     }
+  }
+
+  // Check microphone permission without prompting user
+  private async checkMicrophonePermission(): Promise<void> {
+    try {
+      // navigator.permissions.query may not be available in all WebViews
+      if (navigator.permissions && navigator.permissions.query) {
+        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        this.microphonePermissionGranted = result.state === 'granted';
+        console.log("Microphone permission status:", result.state);
+        
+        // Listen for permission changes
+        result.onchange = () => {
+          this.microphonePermissionGranted = result.state === 'granted';
+          console.log("Microphone permission changed to:", result.state);
+        };
+      }
+    } catch (e) {
+      console.log("Permission API not available, will check on first use");
+    }
+  }
+
+  // Request microphone access once and cache the stream
+  async requestMicrophoneAccess(): Promise<MediaStream | null> {
+    // If we already have a stream, return it
+    if (this.stream && this.stream.active) {
+      console.log("Reusing existing microphone stream");
+      return this.stream;
+    }
+
+    try {
+      console.log("Requesting microphone access...");
+      this.stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        } 
+      });
+      this.microphonePermissionGranted = true;
+      console.log("Microphone access granted, stream cached");
+      return this.stream;
+    } catch (error) {
+      console.error("Microphone access denied:", error);
+      this.microphonePermissionGranted = false;
+      return null;
+    }
+  }
+
+  // Check if we have microphone permission (without prompting)
+  hasMicrophonePermission(): boolean {
+    return this.microphonePermissionGranted || (this.stream !== null && this.stream.active);
   }
 
   // Check if speech recognition is supported (AudioContext always available)
@@ -171,8 +230,14 @@ export class VoiceService {
           return null;
       }
       
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.microphone = this.audioContext.createMediaStreamSource(this.stream);
+      // Use cached stream or request new one
+      const stream = await this.requestMicrophoneAccess();
+      if (!stream) {
+        console.warn("Could not get microphone stream");
+        return null;
+      }
+      
+      this.microphone = this.audioContext.createMediaStreamSource(stream);
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 256;
       
@@ -187,16 +252,23 @@ export class VoiceService {
   }
 
   stopAudioAnalysis() {
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-      this.stream = null;
-    }
+    // Don't stop the stream - keep it cached for reuse
+    // This prevents repeated permission prompts
     if (this.microphone) {
         this.microphone.disconnect();
         this.microphone = null;
     }
     // We do NOT close audioContext here because we might need it for TTS immediately after
     this.analyser = null;
+  }
+
+  // Call this when the app is closing or user explicitly wants to release mic
+  releaseMicrophone() {
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+      console.log("Microphone stream released");
+    }
   }
 
   // --- Speech To Text (using AudioContext + Gemini) ---
@@ -239,18 +311,11 @@ export class VoiceService {
           return;
         }
 
-        // Use existing stream or create new one
-        let stream = this.stream;
+        // Use cached stream to avoid repeated permission prompts
+        const stream = await this.requestMicrophoneAccess();
         if (!stream) {
-          stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-              sampleRate: 16000,
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true
-            } 
-          });
-          this.stream = stream;
+          reject(new Error("Microphone access not granted"));
+          return;
         }
 
         // Create audio source from microphone
