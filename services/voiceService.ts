@@ -1,15 +1,10 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+// OpenRouter API Service for STT (using gemini-2.5-flash)
+// TTS uses Web Speech API (speechSynthesis) since OpenRouter doesn't support audio output
 
-// Helpers for decoding Gemini PCM Audio
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
+// Constants
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const STT_MODEL = "google/gemini-2.5-flash";
 
 // Helper to encode audio to base64
 function encode(bytes: Uint8Array): string {
@@ -66,37 +61,8 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Uint8Array {
   return new Uint8Array(buffer);
 }
 
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  // Ensure we are reading the buffer correctly aligned
-  // Safety check for byte length
-  if (data.byteLength % 2 !== 0) {
-      // Pad with one zero byte if odd (shouldn't happen for valid PCM16)
-      const newData = new Uint8Array(data.byteLength + 1);
-      newData.set(data);
-      data = newData;
-  }
-
-  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
 export class VoiceService {
   private recognition: any = null;
-  private ai: GoogleGenAI;
   private audioContext: AudioContext | null = null;
   
   // Microphone analysis
@@ -104,24 +70,40 @@ export class VoiceService {
   private microphone: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
   
-  // Audio recording for Gemini STT
+  // Audio recording for STT
   private scriptProcessor: ScriptProcessorNode | null = null;
   private recordedSamples: Float32Array[] = [];
   private isRecording: boolean = false;
   private recordingResolve: ((transcript: string) => void) | null = null;
   
-  // Permission cache - to avoid repeated browser permission prompts
+  // Permission cache
   private microphonePermissionGranted: boolean = false;
 
+  // TTS (using Web Speech API)
+  private synth: SpeechSynthesis | null = null;
+  private preferredVoice: SpeechSynthesisVoice | null = null;
+
   constructor() {
-    // Initialize Google GenAI
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
-    console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
-    this.ai = new GoogleGenAI({ apiKey });
+    console.log("VoiceService init (OpenRouter mode)");
+    console.log("OpenRouter API Key present:", !!OPENROUTER_API_KEY, "Key length:", OPENROUTER_API_KEY.length);
+    console.log("STT Model:", STT_MODEL);
     
     // Log available APIs
-    console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
     console.log("AudioContext available:", typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined');
+    
+    // Initialize Web Speech Synthesis for TTS
+    if ('speechSynthesis' in window) {
+      this.synth = window.speechSynthesis;
+      console.log("SpeechSynthesis (TTS) available");
+      
+      // Load voices
+      this.loadVoices();
+      if (this.synth.onvoiceschanged !== undefined) {
+        this.synth.onvoiceschanged = () => this.loadVoices();
+      }
+    } else {
+      console.warn("SpeechSynthesis (TTS) NOT available");
+    }
     
     // Check microphone permission status on init
     this.checkMicrophonePermission();
@@ -136,20 +118,35 @@ export class VoiceService {
       this.recognition.maxAlternatives = 1;
       console.log("SpeechRecognition API available (fallback)");
     } else {
-      console.log("SpeechRecognition API NOT available - using AudioContext + Gemini");
+      console.log("SpeechRecognition API NOT available - using AudioContext + OpenRouter");
+    }
+  }
+
+  // Load available voices for TTS
+  private loadVoices(): void {
+    if (!this.synth) return;
+    
+    const voices = this.synth.getVoices();
+    console.log("Available TTS voices:", voices.length);
+    
+    // Prefer Russian voice
+    this.preferredVoice = voices.find(v => v.lang.startsWith('ru')) || 
+                          voices.find(v => v.lang.startsWith('en')) ||
+                          voices[0] || null;
+    
+    if (this.preferredVoice) {
+      console.log("Selected TTS voice:", this.preferredVoice.name, this.preferredVoice.lang);
     }
   }
 
   // Check microphone permission without prompting user
   private async checkMicrophonePermission(): Promise<void> {
     try {
-      // navigator.permissions.query may not be available in all WebViews
       if (navigator.permissions && navigator.permissions.query) {
         const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
         this.microphonePermissionGranted = result.state === 'granted';
         console.log("Microphone permission status:", result.state);
         
-        // Listen for permission changes
         result.onchange = () => {
           this.microphonePermissionGranted = result.state === 'granted';
           console.log("Microphone permission changed to:", result.state);
@@ -162,7 +159,6 @@ export class VoiceService {
 
   // Request microphone access once and cache the stream
   async requestMicrophoneAccess(): Promise<MediaStream | null> {
-    // If we already have a stream, return it
     if (this.stream && this.stream.active) {
       console.log("Reusing existing microphone stream");
       return this.stream;
@@ -188,33 +184,27 @@ export class VoiceService {
     }
   }
 
-  // Check if we have microphone permission (without prompting)
   hasMicrophonePermission(): boolean {
     return this.microphonePermissionGranted || (this.stream !== null && this.stream.active);
   }
 
-  // Check if speech recognition is supported (AudioContext always available)
   isSpeechRecognitionSupported(): boolean {
     return typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined' || this.recognition !== null;
   }
 
   // --- Audio Context Management ---
 
-  /**
-   * Must be called synchronously within a user gesture (click/keypress).
-   * Ensures AudioContext is running before any async network calls.
-   */
   async prepareForSpeech(): Promise<void> {
     if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
     }
 
     if (this.audioContext.state === 'suspended') {
-        try {
-            await this.audioContext.resume();
-        } catch (e) {
-            console.warn("AudioContext resume failed in prepareForSpeech:", e);
-        }
+      try {
+        await this.audioContext.resume();
+      } catch (e) {
+        console.warn("AudioContext resume failed:", e);
+      }
     }
   }
 
@@ -222,15 +212,13 @@ export class VoiceService {
 
   async startAudioAnalysis(): Promise<AnalyserNode | null> {
     try {
-      // Reuse prepare logic to ensure context exists
       await this.prepareForSpeech();
       
       if (!this.audioContext) {
-          console.warn("AudioContext failed to initialize");
-          return null;
+        console.warn("AudioContext failed to initialize");
+        return null;
       }
       
-      // Use cached stream or request new one
       const stream = await this.requestMicrophoneAccess();
       if (!stream) {
         console.warn("Could not get microphone stream");
@@ -242,27 +230,22 @@ export class VoiceService {
       this.analyser.fftSize = 256;
       
       this.microphone.connect(this.analyser);
-      // Note: Do not connect to destination to avoid feedback loop
       
       return this.analyser;
     } catch (error) {
-      console.warn("Could not start audio analysis (microphone access):", error);
+      console.warn("Could not start audio analysis:", error);
       return null;
     }
   }
 
   stopAudioAnalysis() {
-    // Don't stop the stream - keep it cached for reuse
-    // This prevents repeated permission prompts
     if (this.microphone) {
-        this.microphone.disconnect();
-        this.microphone = null;
+      this.microphone.disconnect();
+      this.microphone = null;
     }
-    // We do NOT close audioContext here because we might need it for TTS immediately after
     this.analyser = null;
   }
 
-  // Call this when the app is closing or user explicitly wants to release mic
   releaseMicrophone() {
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
@@ -271,14 +254,14 @@ export class VoiceService {
     }
   }
 
-  // --- Speech To Text (using AudioContext + Gemini) ---
+  // --- Speech To Text (using AudioContext + OpenRouter) ---
 
   listen(): Promise<string> {
     const startTime = performance.now();
     console.log("🎤 [STT] listen() called at", new Date().toISOString());
     
     return new Promise(async (resolve, reject) => {
-      // Try Web Speech API first if available (more reliable when it works)
+      // Try Web Speech API first if available
       if (this.recognition) {
         console.log("🎤 [STT] Trying Web Speech API first...");
         try {
@@ -292,69 +275,65 @@ export class VoiceService {
             resolve(transcript);
             return;
           }
-          console.log("🎤 [STT] Web Speech API returned empty, falling back to Gemini");
+          console.log("🎤 [STT] Web Speech API returned empty, falling back to OpenRouter");
         } catch (error) {
-          console.warn("🎤 [STT] Web Speech API failed, trying Gemini STT:", error);
+          console.warn("🎤 [STT] Web Speech API failed, trying OpenRouter STT:", error);
         }
       } else {
-        console.log("🎤 [STT] Web Speech API not available, using Gemini directly");
+        console.log("🎤 [STT] Web Speech API not available, using OpenRouter directly");
       }
       
-      // Fallback to AudioContext + Gemini STT
+      // Fallback to AudioContext + OpenRouter STT
       try {
-        console.log("🎤 [STT] Starting Gemini STT...");
-        const geminiStart = performance.now();
-        const transcript = await this.listenWithGemini();
-        const geminiTime = performance.now() - geminiStart;
-        console.log(`🎤 [STT] Gemini STT setup completed in ${geminiTime.toFixed(0)}ms`);
+        console.log("🎤 [STT] Starting OpenRouter STT...");
+        const orStart = performance.now();
+        const transcript = await this.listenWithOpenRouter();
+        const orTime = performance.now() - orStart;
+        console.log(`🎤 [STT] OpenRouter STT setup completed in ${orTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
         console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
         resolve(transcript);
       } catch (error) {
-        console.error("❌ [STT] Gemini STT failed:", error);
-        resolve(""); // Return empty string on error
+        console.error("❌ [STT] OpenRouter STT failed:", error);
+        resolve("");
       }
     });
   }
 
-  // AudioContext + Gemini STT implementation (records WAV)
-  private async listenWithGemini(): Promise<string> {
-    console.log("🎙️ [Gemini STT] listenWithGemini() started");
+  // AudioContext + OpenRouter STT implementation
+  private async listenWithOpenRouter(): Promise<string> {
+    console.log("🎙️ [OpenRouter STT] listenWithOpenRouter() started");
     const startTime = performance.now();
     
     return new Promise(async (resolve, reject) => {
       try {
-        // Ensure AudioContext exists
-        console.log("🎙️ [Gemini STT] Step 1: Preparing AudioContext...");
+        console.log("🎙️ [OpenRouter STT] Step 1: Preparing AudioContext...");
         const prepareStart = performance.now();
         await this.prepareForSpeech();
-        console.log(`🎙️ [Gemini STT] AudioContext prepared in ${(performance.now() - prepareStart).toFixed(0)}ms`);
+        console.log(`🎙️ [OpenRouter STT] AudioContext prepared in ${(performance.now() - prepareStart).toFixed(0)}ms`);
         
         if (!this.audioContext) {
-          console.error("❌ [Gemini STT] AudioContext is null!");
+          console.error("❌ [OpenRouter STT] AudioContext is null!");
           reject(new Error("AudioContext not available"));
           return;
         }
-        console.log(`🎙️ [Gemini STT] AudioContext state: ${this.audioContext.state}, sampleRate: ${this.audioContext.sampleRate}`);
+        console.log(`🎙️ [OpenRouter STT] AudioContext state: ${this.audioContext.state}, sampleRate: ${this.audioContext.sampleRate}`);
 
-        // Use cached stream to avoid repeated permission prompts
-        console.log("🎙️ [Gemini STT] Step 2: Getting microphone stream...");
+        console.log("🎙️ [OpenRouter STT] Step 2: Getting microphone stream...");
         const micStart = performance.now();
         const stream = await this.requestMicrophoneAccess();
-        console.log(`🎙️ [Gemini STT] Microphone access took ${(performance.now() - micStart).toFixed(0)}ms`);
+        console.log(`🎙️ [OpenRouter STT] Microphone access took ${(performance.now() - micStart).toFixed(0)}ms`);
         
         if (!stream) {
-          console.error("❌ [Gemini STT] No microphone stream!");
+          console.error("❌ [OpenRouter STT] No microphone stream!");
           reject(new Error("Microphone access not granted"));
           return;
         }
-        console.log(`🎙️ [Gemini STT] Stream active: ${stream.active}, tracks: ${stream.getTracks().length}`);
+        console.log(`🎙️ [OpenRouter STT] Stream active: ${stream.active}, tracks: ${stream.getTracks().length}`);
 
-        // Create audio source from microphone
-        console.log("🎙️ [Gemini STT] Step 3: Creating audio nodes...");
+        console.log("🎙️ [OpenRouter STT] Step 3: Creating audio nodes...");
         const source = this.audioContext.createMediaStreamSource(stream);
         
-        // Create script processor to capture raw PCM
         const bufferSize = 4096;
         this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
         
@@ -368,7 +347,6 @@ export class VoiceService {
             const inputData = e.inputBuffer.getChannelData(0);
             this.recordedSamples.push(new Float32Array(inputData));
             sampleCount++;
-            // Log every 10 chunks (~1 second at 4096 buffer)
             if (sampleCount % 10 === 0) {
               const duration = (this.recordedSamples.length * bufferSize / (this.audioContext?.sampleRate || 44100)).toFixed(1);
               console.log(`🎙️ [Recording] ${duration}s recorded (${this.recordedSamples.length} chunks)`);
@@ -376,22 +354,21 @@ export class VoiceService {
           }
         };
 
-        // Connect: source -> scriptProcessor -> destination
         source.connect(this.scriptProcessor);
         this.scriptProcessor.connect(this.audioContext.destination);
         
         const setupTime = performance.now() - startTime;
-        console.log(`🎙️ [Gemini STT] Recording setup complete in ${setupTime.toFixed(0)}ms - NOW RECORDING...`);
-        console.log("🎙️ [Gemini STT] Waiting for stopListening() to be called...");
+        console.log(`🎙️ [OpenRouter STT] Recording setup complete in ${setupTime.toFixed(0)}ms - NOW RECORDING...`);
+        console.log("🎙️ [OpenRouter STT] Waiting for stopListening() to be called...");
 
       } catch (error) {
-        console.error("❌ [Gemini STT] Failed to start recording:", error);
+        console.error("❌ [OpenRouter STT] Failed to start recording:", error);
         reject(error);
       }
     });
   }
 
-  // Process recorded audio and send to Gemini
+  // Process recorded audio and send to OpenRouter
   private async processRecordedAudio(): Promise<string> {
     const startTime = performance.now();
     console.log("📤 [Process] processRecordedAudio() started");
@@ -402,7 +379,6 @@ export class VoiceService {
     }
 
     try {
-      // Combine all samples into one Float32Array
       console.log("📤 [Process] Step 1: Combining audio chunks...");
       const combineStart = performance.now();
       const totalLength = this.recordedSamples.reduce((acc, arr) => acc + arr.length, 0);
@@ -419,27 +395,23 @@ export class VoiceService {
       console.log(`📤 [Process] Combined ${this.recordedSamples.length} chunks in ${(performance.now() - combineStart).toFixed(0)}ms`);
       console.log(`📤 [Process] Audio: ${totalLength} samples, ${durationSec.toFixed(2)}s duration, ${sampleRate}Hz`);
 
-      // Check if audio is too short
       if (durationSec < 0.5) {
         console.log("⚠️ [Process] Audio too short (<0.5s), skipping transcription");
         return "";
       }
 
-      // Convert to WAV format
       console.log("📤 [Process] Step 2: Converting to WAV...");
       const wavStart = performance.now();
       const wavData = float32ToWav(combinedSamples, sampleRate);
       console.log(`📤 [Process] WAV conversion took ${(performance.now() - wavStart).toFixed(0)}ms, size: ${(wavData.length / 1024).toFixed(1)}KB`);
 
-      // Convert to base64
       console.log("📤 [Process] Step 3: Encoding to base64...");
       const encodeStart = performance.now();
       const base64Audio = encode(wavData);
       console.log(`📤 [Process] Base64 encoding took ${(performance.now() - encodeStart).toFixed(0)}ms, size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
 
-      // Send to Gemini for transcription
-      console.log("📤 [Process] Step 4: Sending to Gemini API...");
-      const result = await this.transcribeWithGemini(base64Audio);
+      console.log("📤 [Process] Step 4: Sending to OpenRouter API...");
+      const result = await this.transcribeWithOpenRouter(base64Audio);
       
       const totalTime = performance.now() - startTime;
       console.log(`✅ [Process] Total processing time: ${totalTime.toFixed(0)}ms`);
@@ -450,62 +422,80 @@ export class VoiceService {
     }
   }
 
-  // Transcribe audio using Gemini (expects WAV base64)
-  private async transcribeWithGemini(base64Audio: string): Promise<string> {
+  // Transcribe audio using OpenRouter (expects WAV base64)
+  private async transcribeWithOpenRouter(base64Audio: string): Promise<string> {
     const startTime = performance.now();
-    console.log(`🤖 [Gemini API] transcribeWithGemini() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
+    console.log(`🤖 [OpenRouter API] transcribeWithOpenRouter() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
     
     try {
-      console.log("🤖 [Gemini API] Sending request to gemini-2.5-flash...");
+      console.log(`🤖 [OpenRouter API] Sending request to ${STT_MODEL}...`);
       const apiStart = performance.now();
       
-      const response = await this.ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{
-          parts: [
+      const response = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://voxlux.telegram.app',
+          'X-Title': 'VoxLux Voice Assistant',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: STT_MODEL,
+          messages: [
             {
-              inlineData: {
-                mimeType: "audio/wav",
-                data: base64Audio
-              }
-            },
-            {
-              text: "Транскрибируй это аудио. Верни ТОЛЬКО текст того, что было сказано на русском языке, без пояснений и комментариев. Если речь не распознана или аудио пустое, верни пустую строку."
+              role: "user",
+              content: [
+                {
+                  type: "input_audio",
+                  input_audio: {
+                    data: base64Audio,
+                    format: "wav"
+                  }
+                },
+                {
+                  type: "text",
+                  text: "Транскрибируй это аудио. Верни ТОЛЬКО текст того, что было сказано на русском языке, без пояснений и комментариев. Если речь не распознана или аудио пустое, верни пустую строку."
+                }
+              ]
             }
           ]
-        }]
+        })
       });
       
       const apiTime = performance.now() - apiStart;
-      console.log(`🤖 [Gemini API] Response received in ${apiTime.toFixed(0)}ms`);
+      console.log(`🤖 [OpenRouter API] Response received in ${apiTime.toFixed(0)}ms, status: ${response.status}`);
       
-      // Log response details
-      console.log("🤖 [Gemini API] Response structure:", {
-        hasCandidates: !!response.candidates,
-        candidatesCount: response.candidates?.length || 0,
-        hasContent: !!response.candidates?.[0]?.content,
-        partsCount: response.candidates?.[0]?.content?.parts?.length || 0
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ [OpenRouter API] Error response:`, errorText);
+        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      console.log("🤖 [OpenRouter API] Response structure:", {
+        hasChoices: !!data.choices,
+        choicesCount: data.choices?.length || 0,
+        model: data.model
       });
 
-      const transcript = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+      const transcript = data.choices?.[0]?.message?.content?.trim() || "";
       const totalTime = performance.now() - startTime;
-      console.log(`✅ [Gemini API] Transcription complete in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
+      console.log(`✅ [OpenRouter API] Transcription complete in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
       
       return transcript;
     } catch (error: any) {
       const errorTime = performance.now() - startTime;
-      console.error(`❌ [Gemini API] Error after ${errorTime.toFixed(0)}ms:`, error);
-      console.error("❌ [Gemini API] Error details:", {
+      console.error(`❌ [OpenRouter API] Error after ${errorTime.toFixed(0)}ms:`, error);
+      console.error("❌ [OpenRouter API] Error details:", {
         name: error?.name,
-        message: error?.message,
-        status: error?.status,
-        statusText: error?.statusText
+        message: error?.message
       });
       throw error;
     }
   }
 
-  // Web Speech API implementation (fallback for browsers that support it)
+  // Web Speech API implementation (fallback)
   private listenWithWebSpeech(): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.recognition) {
@@ -600,70 +590,43 @@ export class VoiceService {
     }
   }
 
-  // --- Google Gemini Text To Speech Only ---
+  // --- Text To Speech (using Web Speech API) ---
 
   async speak(text: string): Promise<void> {
     if (!text) return;
 
-    // Ensure AudioContext is ready.
-    // NOTE: This call might fail to resume if not triggered by user gesture,
-    // which is why prepareForSpeech() should be called earlier in the flow.
-    await this.prepareForSpeech();
-    
-    if (!this.audioContext) return;
-
-    try {
-        const response = await this.ai.models.generateContent({
-          model: "gemini-2.5-flash-preview-tts",
-          contents: [{ parts: [{ text }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: 'Kore' }, 
-                },
-            },
-          },
-        });
-
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        
-        if (!base64Audio) {
-            console.warn("No audio data received from Gemini TTS");
-            return;
-        }
-
-        // Decode PCM
-        const audioBuffer = await decodeAudioData(
-            decode(base64Audio),
-            this.audioContext,
-            24000,
-            1
-        );
-
-        // Play Audio
-        return new Promise((resolve, reject) => {
-            if (!this.audioContext) { 
-                resolve(); 
-                return; 
-            }
-            
-            const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.audioContext.destination);
-            
-            source.onended = () => {
-                resolve();
-            };
-            
-            source.start();
-        });
-
-    } catch (error) {
-        console.error("Gemini TTS Error:", error);
-        // Re-throw to let caller handle it
-        throw error;
+    // Use Web Speech API (speechSynthesis)
+    if (!this.synth) {
+      console.warn("SpeechSynthesis not available");
+      return;
     }
+
+    return new Promise((resolve) => {
+      // Cancel any ongoing speech
+      this.synth!.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'ru-RU';
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      
+      if (this.preferredVoice) {
+        utterance.voice = this.preferredVoice;
+      }
+      
+      utterance.onend = () => {
+        console.log("TTS finished");
+        resolve();
+      };
+      
+      utterance.onerror = (e) => {
+        console.error("TTS error:", e);
+        resolve();
+      };
+      
+      console.log("Starting TTS...");
+      this.synth!.speak(utterance);
+    });
   }
 }
 
