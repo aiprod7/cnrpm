@@ -20,6 +20,52 @@ function encode(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Convert Float32Array PCM to WAV format
+function float32ToWav(samples: Float32Array, sampleRate: number): Uint8Array {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = samples.length * bytesPerSample;
+  const bufferSize = 44 + dataSize;
+  
+  const buffer = new ArrayBuffer(bufferSize);
+  const view = new DataView(buffer);
+  
+  // WAV header
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+  
+  writeString(0, 'RIFF');
+  view.setUint32(4, bufferSize - 8, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+  
+  // Write PCM samples (convert float32 to int16)
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+    view.setInt16(offset, int16, true);
+    offset += 2;
+  }
+  
+  return new Uint8Array(buffer);
+}
+
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
@@ -58,10 +104,11 @@ export class VoiceService {
   private microphone: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
   
-  // MediaRecorder for Gemini STT
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioChunks: Blob[] = [];
+  // Audio recording for Gemini STT
+  private scriptProcessor: ScriptProcessorNode | null = null;
+  private recordedSamples: Float32Array[] = [];
   private isRecording: boolean = false;
+  private recordingResolve: ((transcript: string) => void) | null = null;
 
   constructor() {
     // Initialize Google GenAI
@@ -69,10 +116,9 @@ export class VoiceService {
     console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
     this.ai = new GoogleGenAI({ apiKey });
     
-    // Check for MediaRecorder support (primary method for Telegram WebView)
-    if (typeof MediaRecorder !== 'undefined') {
-      console.log("MediaRecorder API available - will use Gemini for STT");
-    }
+    // Log available APIs
+    console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
+    console.log("AudioContext available:", typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined');
     
     // Initialize Speech Recognition as fallback (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -84,13 +130,13 @@ export class VoiceService {
       this.recognition.maxAlternatives = 1;
       console.log("SpeechRecognition API available (fallback)");
     } else {
-      console.log("SpeechRecognition API NOT available - using MediaRecorder + Gemini");
+      console.log("SpeechRecognition API NOT available - using AudioContext + Gemini");
     }
   }
 
-  // Check if speech recognition is supported (MediaRecorder OR Web Speech API)
+  // Check if speech recognition is supported (AudioContext always available)
   isSpeechRecognitionSupported(): boolean {
-    return typeof MediaRecorder !== 'undefined' || this.recognition !== null;
+    return typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined' || this.recognition !== null;
   }
 
   // --- Audio Context Management ---
@@ -153,101 +199,86 @@ export class VoiceService {
     this.analyser = null;
   }
 
-  // --- Speech To Text (using MediaRecorder + Gemini) ---
+  // --- Speech To Text (using AudioContext + Gemini) ---
 
   listen(): Promise<string> {
     return new Promise(async (resolve, reject) => {
-      // Always prefer MediaRecorder + Gemini for Telegram WebView compatibility
-      if (typeof MediaRecorder !== 'undefined') {
+      // Try Web Speech API first if available (more reliable when it works)
+      if (this.recognition) {
         try {
-          const transcript = await this.listenWithGemini();
-          resolve(transcript);
-        } catch (error) {
-          console.error("Gemini STT failed:", error);
-          // Try fallback to Web Speech API if available
-          if (this.recognition) {
-            console.log("Falling back to Web Speech API");
-            this.listenWithWebSpeech().then(resolve).catch(reject);
-          } else {
-            reject(error);
+          const transcript = await this.listenWithWebSpeech();
+          if (transcript) {
+            resolve(transcript);
+            return;
           }
+        } catch (error) {
+          console.warn("Web Speech API failed, trying Gemini STT:", error);
         }
-        return;
       }
       
-      // Fallback to Web Speech API (for browsers that support it)
-      if (this.recognition) {
-        this.listenWithWebSpeech().then(resolve).catch(reject);
-        return;
+      // Fallback to AudioContext + Gemini STT
+      try {
+        const transcript = await this.listenWithGemini();
+        resolve(transcript);
+      } catch (error) {
+        console.error("Gemini STT failed:", error);
+        resolve(""); // Return empty string on error
       }
-
-      reject(new Error("No speech recognition method available"));
     });
   }
 
-  // MediaRecorder + Gemini STT implementation
+  // AudioContext + Gemini STT implementation (records WAV)
   private async listenWithGemini(): Promise<string> {
     return new Promise(async (resolve, reject) => {
       try {
-        // Use existing stream from startAudioAnalysis or create new one
-        let stream = this.stream;
-        if (!stream) {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Ensure AudioContext exists
+        await this.prepareForSpeech();
+        
+        if (!this.audioContext) {
+          reject(new Error("AudioContext not available"));
+          return;
         }
 
-        this.audioChunks = [];
+        // Use existing stream or create new one
+        let stream = this.stream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true
+            } 
+          });
+          this.stream = stream;
+        }
+
+        // Create audio source from microphone
+        const source = this.audioContext.createMediaStreamSource(stream);
+        
+        // Create script processor to capture raw PCM
+        // Note: ScriptProcessorNode is deprecated but works everywhere
+        // AudioWorklet is better but more complex
+        const bufferSize = 4096;
+        this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+        
+        this.recordedSamples = [];
         this.isRecording = true;
+        this.recordingResolve = resolve;
 
-        // Determine best supported MIME type
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-          ? 'audio/webm;codecs=opus' 
-          : MediaRecorder.isTypeSupported('audio/webm') 
-            ? 'audio/webm'
-            : 'audio/mp4';
-
-        console.log("MediaRecorder using MIME type:", mimeType);
-
-        this.mediaRecorder = new MediaRecorder(stream, { mimeType });
-
-        this.mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            this.audioChunks.push(event.data);
+        this.scriptProcessor.onaudioprocess = (e) => {
+          if (this.isRecording) {
+            const inputData = e.inputBuffer.getChannelData(0);
+            // Clone the data as it gets reused
+            this.recordedSamples.push(new Float32Array(inputData));
           }
         };
 
-        this.mediaRecorder.onstop = async () => {
-          this.isRecording = false;
-          
-          if (this.audioChunks.length === 0) {
-            resolve("");
-            return;
-          }
-
-          try {
-            const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-            console.log("Audio recorded, size:", audioBlob.size, "bytes");
-            
-            // Convert to base64
-            const base64Audio = await this.blobToBase64(audioBlob);
-            
-            // Send to Gemini for transcription
-            const transcript = await this.transcribeWithGemini(base64Audio, mimeType);
-            resolve(transcript);
-          } catch (error) {
-            console.error("Transcription error:", error);
-            resolve(""); // Return empty string on error instead of rejecting
-          }
-        };
-
-        this.mediaRecorder.onerror = (event: any) => {
-          console.error("MediaRecorder error:", event.error);
-          this.isRecording = false;
-          reject(event.error);
-        };
-
-        // Start recording
-        this.mediaRecorder.start();
-        console.log("Recording started...");
+        // Connect: source -> scriptProcessor -> destination (required for processing)
+        source.connect(this.scriptProcessor);
+        this.scriptProcessor.connect(this.audioContext.destination);
+        
+        console.log("Recording started with AudioContext (WAV format)...");
 
       } catch (error) {
         console.error("Failed to start recording:", error);
@@ -256,23 +287,60 @@ export class VoiceService {
     });
   }
 
-  // Transcribe audio using Gemini
-  private async transcribeWithGemini(base64Audio: string, mimeType: string): Promise<string> {
+  // Process recorded audio and send to Gemini
+  private async processRecordedAudio(): Promise<string> {
+    if (this.recordedSamples.length === 0) {
+      console.log("No audio recorded");
+      return "";
+    }
+
     try {
-      console.log("Sending audio to Gemini for transcription...");
+      // Combine all samples into one Float32Array
+      const totalLength = this.recordedSamples.reduce((acc, arr) => acc + arr.length, 0);
+      const combinedSamples = new Float32Array(totalLength);
+      
+      let offset = 0;
+      for (const samples of this.recordedSamples) {
+        combinedSamples.set(samples, offset);
+        offset += samples.length;
+      }
+
+      console.log("Total recorded samples:", totalLength, "Duration:", (totalLength / (this.audioContext?.sampleRate || 44100)).toFixed(2), "seconds");
+
+      // Convert to WAV format
+      const sampleRate = this.audioContext?.sampleRate || 44100;
+      const wavData = float32ToWav(combinedSamples, sampleRate);
+      
+      console.log("WAV data size:", wavData.length, "bytes");
+
+      // Convert to base64
+      const base64Audio = encode(wavData);
+
+      // Send to Gemini for transcription
+      return await this.transcribeWithGemini(base64Audio);
+    } catch (error) {
+      console.error("Error processing recorded audio:", error);
+      return "";
+    }
+  }
+
+  // Transcribe audio using Gemini (expects WAV base64)
+  private async transcribeWithGemini(base64Audio: string): Promise<string> {
+    try {
+      console.log("Sending WAV audio to Gemini for transcription...");
       
       const response = await this.ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-2.5-flash",
         contents: [{
           parts: [
             {
               inlineData: {
-                mimeType: mimeType,
+                mimeType: "audio/wav",
                 data: base64Audio
               }
             },
             {
-              text: "Транскрибируй это аудио на русском языке. Верни ТОЛЬКО текст того, что было сказано, без пояснений. Если речь не распознана или аудио пустое, верни пустую строку."
+              text: "Транскрибируй это аудио. Верни ТОЛЬКО текст того, что было сказано на русском языке, без пояснений и комментариев. Если речь не распознана или аудио пустое, верни пустую строку."
             }
           ]
         }]
@@ -287,20 +355,7 @@ export class VoiceService {
     }
   }
 
-  // Convert Blob to base64
-  private blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  // Web Speech API implementation (fallback)
+  // Web Speech API implementation (fallback for browsers that support it)
   private listenWithWebSpeech(): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.recognition) {
@@ -341,13 +396,21 @@ export class VoiceService {
   }
 
   stopListening() {
-    // Stop MediaRecorder if recording
-    if (this.mediaRecorder && this.isRecording) {
-      try {
-        this.mediaRecorder.stop();
-        console.log("MediaRecorder stopped");
-      } catch (e) {
-        console.warn("Error stopping MediaRecorder", e);
+    // Stop AudioContext recording
+    if (this.scriptProcessor && this.isRecording) {
+      this.isRecording = false;
+      this.scriptProcessor.disconnect();
+      this.scriptProcessor = null;
+      console.log("Recording stopped");
+      
+      // Process the recorded audio
+      if (this.recordingResolve) {
+        this.processRecordedAudio().then((transcript) => {
+          if (this.recordingResolve) {
+            this.recordingResolve(transcript);
+            this.recordingResolve = null;
+          }
+        });
       }
     }
     
