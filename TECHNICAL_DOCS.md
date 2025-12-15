@@ -197,3 +197,34 @@ Google Gemini API имеет лимиты. Используйте кэширов
 2.  **Streaming TTS:** Переход на `generateContentStream` для снижения задержки перед началом речи (Latnecy).
 3.  **Voice Activity Detection (VAD):** Улучшение определения окончания речи пользователя для более плавного диалога без нажатия кнопок.
 4.  **Мультиязычность:** Добавление поддержки английского языка с переключением в интерфейсе.
+---
+
+## 9. История версий и исправлений
+
+### Версия 1.0.1 (15.12.2025)
+
+#### Исправленные ошибки:
+
+1. **voiceService.ts** - Добавлен отсутствующий экспорт экземпляра сервиса:
+   ```typescript
+   export const voiceService = new VoiceService();
+   ```
+
+2. **App.tsx** - Добавлен отсутствующий экспорт компонента по умолчанию:
+   ```typescript
+   export default App;
+   ```
+
+#### Файлы затронутые изменениями:
+- `services/voiceService.ts` - добавлена строка экспорта
+- `App.tsx` - добавлена строка экспорта
+- `CHANGELOG.md` - создан файл с историей изменений
+
+---
+
+## 10. Ссылки и ресурсы
+
+- **Репозиторий:** [GitHub - aiprod7/cnrpm](https://github.com/aiprod7/cnrpm)
+- **Telegram Web Apps SDK:** [Документация](https://core.telegram.org/bots/webapps)
+- **Google Gemini API:** [Документация](https://ai.google.dev/docs)
+- **n8n Webhooks:** [Документация](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/)
