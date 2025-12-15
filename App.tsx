@@ -130,9 +130,9 @@ const App: React.FC = () => {
        return;
     }
     if (appState === AppState.IDLE) {
-       // Check if speech recognition is supported
+       // Check if any speech recognition is supported (MediaRecorder or Web Speech API)
        if (!voiceService.isSpeechRecognitionSupported()) {
-         console.warn("Speech Recognition not supported, showing warning");
+         console.warn("No speech recognition method available");
          setShowSpeechWarning(true);
          tg?.HapticFeedback.notificationOccurred('warning');
          setTimeout(() => setShowSpeechWarning(false), 5000);

@@ -11,6 +11,15 @@ function decode(base64: string) {
   return bytes;
 }
 
+// Helper to encode audio to base64
+function encode(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
@@ -48,6 +57,11 @@ export class VoiceService {
   private analyser: AnalyserNode | null = null;
   private microphone: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
+  
+  // MediaRecorder for Gemini STT
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
+  private isRecording: boolean = false;
 
   constructor() {
     // Initialize Google GenAI
@@ -55,7 +69,12 @@ export class VoiceService {
     console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
     this.ai = new GoogleGenAI({ apiKey });
     
-    // Initialize Speech Recognition (Browser Native)
+    // Check for MediaRecorder support (primary method for Telegram WebView)
+    if (typeof MediaRecorder !== 'undefined') {
+      console.log("MediaRecorder API available - will use Gemini for STT");
+    }
+    
+    // Initialize Speech Recognition as fallback (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       this.recognition = new SpeechRecognition();
@@ -63,15 +82,15 @@ export class VoiceService {
       this.recognition.interimResults = false;
       this.recognition.lang = 'ru-RU';
       this.recognition.maxAlternatives = 1;
-      console.log("SpeechRecognition API available");
+      console.log("SpeechRecognition API available (fallback)");
     } else {
-      console.warn("SpeechRecognition API NOT available in this browser/WebView");
+      console.log("SpeechRecognition API NOT available - using MediaRecorder + Gemini");
     }
   }
 
-  // Check if speech recognition is supported
+  // Check if speech recognition is supported (MediaRecorder OR Web Speech API)
   isSpeechRecognitionSupported(): boolean {
-    return this.recognition !== null;
+    return typeof MediaRecorder !== 'undefined' || this.recognition !== null;
   }
 
   // --- Audio Context Management ---
@@ -134,12 +153,158 @@ export class VoiceService {
     this.analyser = null;
   }
 
-  // --- Speech To Text ---
+  // --- Speech To Text (using MediaRecorder + Gemini) ---
 
   listen(): Promise<string> {
+    return new Promise(async (resolve, reject) => {
+      // Always prefer MediaRecorder + Gemini for Telegram WebView compatibility
+      if (typeof MediaRecorder !== 'undefined') {
+        try {
+          const transcript = await this.listenWithGemini();
+          resolve(transcript);
+        } catch (error) {
+          console.error("Gemini STT failed:", error);
+          // Try fallback to Web Speech API if available
+          if (this.recognition) {
+            console.log("Falling back to Web Speech API");
+            this.listenWithWebSpeech().then(resolve).catch(reject);
+          } else {
+            reject(error);
+          }
+        }
+        return;
+      }
+      
+      // Fallback to Web Speech API (for browsers that support it)
+      if (this.recognition) {
+        this.listenWithWebSpeech().then(resolve).catch(reject);
+        return;
+      }
+
+      reject(new Error("No speech recognition method available"));
+    });
+  }
+
+  // MediaRecorder + Gemini STT implementation
+  private async listenWithGemini(): Promise<string> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // Use existing stream from startAudioAnalysis or create new one
+        let stream = this.stream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+
+        this.audioChunks = [];
+        this.isRecording = true;
+
+        // Determine best supported MIME type
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+          ? 'audio/webm;codecs=opus' 
+          : MediaRecorder.isTypeSupported('audio/webm') 
+            ? 'audio/webm'
+            : 'audio/mp4';
+
+        console.log("MediaRecorder using MIME type:", mimeType);
+
+        this.mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+        this.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.audioChunks.push(event.data);
+          }
+        };
+
+        this.mediaRecorder.onstop = async () => {
+          this.isRecording = false;
+          
+          if (this.audioChunks.length === 0) {
+            resolve("");
+            return;
+          }
+
+          try {
+            const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+            console.log("Audio recorded, size:", audioBlob.size, "bytes");
+            
+            // Convert to base64
+            const base64Audio = await this.blobToBase64(audioBlob);
+            
+            // Send to Gemini for transcription
+            const transcript = await this.transcribeWithGemini(base64Audio, mimeType);
+            resolve(transcript);
+          } catch (error) {
+            console.error("Transcription error:", error);
+            resolve(""); // Return empty string on error instead of rejecting
+          }
+        };
+
+        this.mediaRecorder.onerror = (event: any) => {
+          console.error("MediaRecorder error:", event.error);
+          this.isRecording = false;
+          reject(event.error);
+        };
+
+        // Start recording
+        this.mediaRecorder.start();
+        console.log("Recording started...");
+
+      } catch (error) {
+        console.error("Failed to start recording:", error);
+        reject(error);
+      }
+    });
+  }
+
+  // Transcribe audio using Gemini
+  private async transcribeWithGemini(base64Audio: string, mimeType: string): Promise<string> {
+    try {
+      console.log("Sending audio to Gemini for transcription...");
+      
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Audio
+              }
+            },
+            {
+              text: "Транскрибируй это аудио на русском языке. Верни ТОЛЬКО текст того, что было сказано, без пояснений. Если речь не распознана или аудио пустое, верни пустую строку."
+            }
+          ]
+        }]
+      });
+
+      const transcript = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+      console.log("Gemini transcription result:", transcript);
+      return transcript;
+    } catch (error) {
+      console.error("Gemini transcription error:", error);
+      throw error;
+    }
+  }
+
+  // Convert Blob to base64
+  private blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Web Speech API implementation (fallback)
+  private listenWithWebSpeech(): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.recognition) {
-        reject(new Error("Speech Recognition API not supported in this browser."));
+        reject(new Error("Speech Recognition API not supported"));
         return;
       }
 
@@ -153,17 +318,17 @@ export class VoiceService {
 
       this.recognition.onerror = (event: any) => {
         if (event.error === 'no-speech' || event.error === 'aborted') {
-            resolve("");
+          resolve("");
         } else {
-            console.warn("Speech recognition error", event.error);
-            reject(new Error(event.error));
+          console.warn("Speech recognition error", event.error);
+          reject(new Error(event.error));
         }
       };
-      
+
       this.recognition.onend = () => {
-         if (!hasResult) {
-             resolve("");
-         }
+        if (!hasResult) {
+          resolve("");
+        }
       };
 
       try {
@@ -176,6 +341,17 @@ export class VoiceService {
   }
 
   stopListening() {
+    // Stop MediaRecorder if recording
+    if (this.mediaRecorder && this.isRecording) {
+      try {
+        this.mediaRecorder.stop();
+        console.log("MediaRecorder stopped");
+      } catch (e) {
+        console.warn("Error stopping MediaRecorder", e);
+      }
+    }
+    
+    // Stop Web Speech API if active
     if (this.recognition) {
       try {
         this.recognition.stop();
