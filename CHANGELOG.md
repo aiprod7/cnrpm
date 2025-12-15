@@ -1,5 +1,24 @@
 ﻿# CHANGELOG - История изменений VoxLux
 
+## [1.0.3] - 2025-12-15
+
+### Исправлено (Bugfixes)
+
+#### 1. Чёрный экран после деплоя - отсутствие API ключа Gemini
+**Файлы:** `vite.config.ts`, `.github/workflows/azure-static-web-apps-salmon-forest-009edfa10.yml`
+
+**Проблема:** После деплоя приложение показывало чёрный экран, потому что:
+1. В `vite.config.ts` читалась переменная `GEMINI_API_KEY`, но в `.env` ключ назывался `API_KEY`
+2. В GitHub Actions workflow не передавалась переменная окружения при сборке
+
+**Решение:** 
+- `vite.config.ts`: Добавлен fallback `env.GEMINI_API_KEY || env.API_KEY`
+- Workflow: Добавлена передача `GEMINI_API_KEY` и `API_KEY` из GitHub Secrets
+
+**Важно:** Необходимо добавить секрет `GEMINI_API_KEY` в GitHub Repository Settings → Secrets
+
+---
+
 ## [1.0.2] - 2025-12-15
 
 ### Исправлено (Bugfixes)
