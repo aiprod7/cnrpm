@@ -236,5 +236,3 @@ export class VoiceService {
 }
 
 export const voiceService = new VoiceService();
-
-export const voiceService = new VoiceService();
