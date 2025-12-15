@@ -68,6 +68,7 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
   timestamp: Date;
+  inputType?: 'voice' | 'text';
 }
 
 export enum AppState {

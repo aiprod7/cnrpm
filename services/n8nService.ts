@@ -7,7 +7,11 @@ interface N8nResponse {
   };
 }
 
-export const sendQueryToN8n = async (query: string, userId: string = "unknown"): Promise<N8nResponse> => {
+export const sendQueryToN8n = async (
+  query: string, 
+  userId: string = "unknown",
+  inputType: 'voice' | 'text' = 'voice'
+): Promise<N8nResponse> => {
   if (USE_MOCK_BACKEND) {
     return mockN8nResponse(query);
   }
@@ -25,7 +29,8 @@ export const sendQueryToN8n = async (query: string, userId: string = "unknown"):
         userId,
         query,
         sessionId: Date.now().toString(),
-        platform: 'telegram_mini_app'
+        platform: 'telegram_mini_app',
+        inputType
       }),
       signal: controller.signal
     });

@@ -13,6 +13,12 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   
+  // Text Input State
+  const [isTextMode, setIsTextMode] = useState(false);
+  const [inputText, setInputText] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
+
   // Ref to prevent double greeting in React Strict Mode (dev)
   const hasGreetingPlayed = useRef(false);
 
@@ -30,109 +36,145 @@ const App: React.FC = () => {
     if (hasGreetingPlayed.current) return;
     hasGreetingPlayed.current = true;
 
-    // 2. Show greeting text only (No Auto-Speak to prevent blocking)
+    // 2. Show greeting text only
     setMessages([{
       id: 'init',
       role: 'model',
       text: GREETING_TEXT,
       timestamp: new Date()
     }]);
-
-    // We do NOT call speakGreeting() here anymore. 
-    // Browsers block AudioContext autoplay without user gesture, 
-    // causing the app to get stuck in "SPEAKING" state.
   }, []);
 
-  const handleMicButton = async () => {
-    // Case 1: Manual Stop
-    if (appState === AppState.LISTENING) {
-       voiceService.stopListening();
-       // The 'listen' promise in runConversation will resolve (empty), handling the state transition.
-       return;
+  // --- Shared Processing Logic ---
+  const processQuery = async (text: string, inputType: 'voice' | 'text') => {
+    if (!text.trim()) return;
+
+    // 1. Update Transcript (User)
+    const userMsg: ChatMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        text: text,
+        timestamp: new Date(),
+        inputType
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    // 2. Send to n8n (Processing)
+    setAppState(AppState.PROCESSING);
+    
+    // Clear text input if in text mode
+    if (inputType === 'text') {
+        setInputText("");
     }
 
-    // Case 2: Start
+    try {
+        const result = await sendQueryToN8n(text, tg?.initDataUnsafe?.user?.id?.toString(), inputType);
+        
+        // 3. Update Transcript (Model)
+        const botMsg: ChatMessage = {
+            id: Date.now().toString() + '_bot',
+            role: 'model',
+            text: result.aiResponse,
+            timestamp: new Date(),
+            inputType: 'voice'
+        };
+        setMessages(prev => [...prev, botMsg]);
+
+        // 4. Speak Response (TTS)
+        if (result.meta.shouldSpeak) {
+            setAppState(AppState.SPEAKING);
+            try {
+                // If in text mode, visualizer works on 'SPEAKING' state automatically via simulation
+                await voiceService.speak(result.aiResponse);
+            } catch (speakError) {
+                console.error("Speaking failed:", speakError);
+            }
+        }
+    } catch (e) {
+        console.error("Processing Error", e);
+        setAppState(AppState.ERROR);
+        setTimeout(() => setAppState(AppState.IDLE), 3000);
+        return;
+    }
+
+    setAppState(AppState.IDLE);
+    tg?.HapticFeedback.notificationOccurred('success');
+  };
+
+  // --- Voice Handlers ---
+  const handleMicButton = async () => {
+    if (appState === AppState.LISTENING) {
+       voiceService.stopListening();
+       return;
+    }
     if (appState === AppState.IDLE) {
-       await runConversation();
+       await runVoiceConversation();
     }
   };
 
-  const runConversation = async () => {
+  const runVoiceConversation = async () => {
     try {
-      // 1. Setup Audio Analysis for Visualizer
-      // Note: We start this before recognition to ensure visualizer is ready
       const audioAnalyser = await voiceService.startAudioAnalysis();
       setAnalyser(audioAnalyser);
       setAppState(AppState.LISTENING);
       tg?.HapticFeedback.impactOccurred('medium');
 
-      // 2. Listen for Speech
       let transcript = "";
       try {
         transcript = await voiceService.listen();
       } catch (err) {
         console.warn("Speech recognition error:", err);
-        // Do not go to ERROR state for simple recognition aborts/no-speech
       }
 
-      // Cleanup Mic Analysis immediately after listening stops
       voiceService.stopAudioAnalysis();
       setAnalyser(null);
 
-      // If no speech was detected or stopped manually
       if (!transcript) {
         setAppState(AppState.IDLE);
         return;
       }
 
-      // 3. Update Transcript (User)
-      const userMsg: ChatMessage = {
-          id: Date.now().toString(),
-          role: 'user',
-          text: transcript,
-          timestamp: new Date()
-      };
-      setMessages(prev => [...prev, userMsg]);
-
-      // 4. Send to n8n (Processing)
-      setAppState(AppState.PROCESSING);
-      const result = await sendQueryToN8n(transcript, tg?.initDataUnsafe?.user?.id?.toString());
-      
-      // 5. Update Transcript (Model)
-      const botMsg: ChatMessage = {
-          id: Date.now().toString() + '_bot',
-          role: 'model',
-          text: result.aiResponse,
-          timestamp: new Date()
-      };
-      setMessages(prev => [...prev, botMsg]);
-
-      // 6. Speak Response (TTS) - ONLY if shouldSpeak is true
-      if (result.meta.shouldSpeak) {
-          setAppState(AppState.SPEAKING);
-          try {
-            await voiceService.speak(result.aiResponse);
-          } catch (speakError) {
-             console.error("Speaking failed:", speakError);
-             // Swallow error to ensure we return to IDLE
-          }
-      }
-
-      setAppState(AppState.IDLE);
-      tg?.HapticFeedback.notificationOccurred('success');
+      await processQuery(transcript, 'voice');
 
     } catch (e) {
-      console.error("Conversation Flow Error", e);
-      // Ensure we clean up if something exploded
+      console.error("Voice Conversation Flow Error", e);
       voiceService.stopAudioAnalysis();
       setAnalyser(null);
-      
       setAppState(AppState.ERROR);
-      tg?.HapticFeedback.notificationOccurred('error');
-      
-      // Reset after a moment
       setTimeout(() => setAppState(AppState.IDLE), 3000);
     }
+  };
+
+  // --- Text Handlers ---
+  const toggleTextMode = () => {
+    setIsTextMode(!isTextMode);
+    setInputError(null);
+    if (!isTextMode) {
+        // Delay focus slightly to allow render
+        setTimeout(() => textInputRef.current?.focus(), 100);
+    }
+  };
+
+  const handleTextSubmit = async () => {
+      if (!inputText.trim()) return;
+
+      // Cyrillic Validation: Check if string contains at least one Cyrillic character
+      const hasCyrillic = /[а-яА-ЯёЁ]/.test(inputText);
+      if (!hasCyrillic) {
+          setInputError("Пожалуйста, введите вопрос на русском языке.");
+          tg?.HapticFeedback.notificationOccurred('warning');
+          return;
+      }
+      
+      setInputError(null);
+      await processQuery(inputText, 'text');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          handleTextSubmit();
+      }
   };
 
   return (
@@ -151,8 +193,8 @@ const App: React.FC = () => {
           />
         </header>
 
-        {/* Visualizer (Hero) */}
-        <div className="flex-none h-[40vh] flex items-center justify-center">
+        {/* Visualizer (Hero) - De-emphasize when in Text Mode */}
+        <div className={`flex-none h-[35vh] flex items-center justify-center transition-all duration-500 ${isTextMode ? 'opacity-30 scale-90 blur-sm' : 'opacity-100 scale-100'}`}>
           <Visualizer 
             analyser={analyser} 
             state={appState} 
@@ -162,30 +204,83 @@ const App: React.FC = () => {
         {/* Transcript */}
         <Transcript messages={messages} tg={tg} />
 
-        {/* Controls */}
-        <div className="flex-none p-6 w-full flex justify-center pb-12">
-            <button
-                onClick={handleMicButton}
-                disabled={appState === AppState.PROCESSING || appState === AppState.SPEAKING}
-                className={`
-                    group relative px-8 py-4 rounded-full font-medium tracking-wide text-lg 
-                    shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all w-full max-w-xs overflow-hidden
-                    ${appState === AppState.LISTENING 
-                        ? 'bg-red-900/80 text-white border border-red-500/50 hover:bg-red-800' 
-                        : 'bg-white text-black hover:scale-105 active:scale-95'}
-                    ${(appState === AppState.PROCESSING || appState === AppState.SPEAKING) ? 'opacity-50 cursor-not-allowed' : ''}
-                `}
-            >
-                <span className="relative z-10">
-                    {appState === AppState.LISTENING ? 'Stop Listening' : 
-                     appState === AppState.PROCESSING ? 'Processing...' :
-                     appState === AppState.SPEAKING ? 'Speaking...' :
-                     'Tap to Speak'}
-                </span>
-                {appState === AppState.IDLE && (
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
-                )}
-            </button>
+        {/* Controls Area */}
+        <div className="flex-none p-6 w-full flex flex-col justify-end pb-8 min-h-[140px] transition-all duration-300">
+            
+            {/* Text Input UI */}
+            {isTextMode ? (
+                <div className="w-full max-w-sm mx-auto animate-fadeInUp">
+                    <div className="relative bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden shadow-2xl">
+                         <textarea
+                            ref={textInputRef}
+                            value={inputText}
+                            onChange={(e) => {
+                                setInputText(e.target.value);
+                                if (inputError) setInputError(null);
+                            }}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Напишите ваш вопрос на русском..."
+                            className="w-full bg-transparent text-white p-4 text-base outline-none resize-none h-24 placeholder-gray-400 font-light"
+                         />
+                         <div className="flex justify-between items-center px-4 pb-3">
+                             <span className="text-xs text-red-400 h-4 truncate pr-2">{inputError}</span>
+                             <button 
+                                onClick={handleTextSubmit}
+                                disabled={!inputText.trim() || appState !== AppState.IDLE}
+                                className={`rounded-full p-2 bg-white text-black transition-all ${(!inputText.trim() || appState !== AppState.IDLE) ? 'opacity-50' : 'hover:scale-105 active:scale-95'}`}
+                             >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                    <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+                                </svg>
+                             </button>
+                         </div>
+                    </div>
+                    <button 
+                        onClick={toggleTextMode} 
+                        className="mx-auto mt-4 text-xs text-gray-500 hover:text-white uppercase tracking-widest block transition-colors"
+                    >
+                        Back to Voice
+                    </button>
+                </div>
+            ) : (
+                /* Voice Input UI */
+                <div className="flex items-center justify-center space-x-6 w-full max-w-xs mx-auto animate-fadeIn">
+                     {/* Text Mode Toggle */}
+                    <button
+                        onClick={toggleTextMode}
+                        className="p-4 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white hover:scale-105 active:scale-95 transition-all"
+                        aria-label="Switch to Text Mode"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+                        </svg>
+                    </button>
+
+                    {/* Main Mic Button */}
+                    <button
+                        onClick={handleMicButton}
+                        disabled={appState === AppState.PROCESSING || appState === AppState.SPEAKING}
+                        className={`
+                            group relative px-8 py-4 rounded-full font-medium tracking-wide text-lg flex-1
+                            shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all overflow-hidden
+                            ${appState === AppState.LISTENING 
+                                ? 'bg-red-900/80 text-white border border-red-500/50 hover:bg-red-800' 
+                                : 'bg-white text-black hover:scale-105 active:scale-95'}
+                            ${(appState === AppState.PROCESSING || appState === AppState.SPEAKING) ? 'opacity-50 cursor-not-allowed' : ''}
+                        `}
+                    >
+                        <span className="relative z-10 whitespace-nowrap">
+                            {appState === AppState.LISTENING ? 'Stop' : 
+                            appState === AppState.PROCESSING ? 'Thinking...' :
+                            appState === AppState.SPEAKING ? 'Speaking...' :
+                            'Tap to Speak'}
+                        </span>
+                        {appState === AppState.IDLE && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
+                        )}
+                    </button>
+                </div>
+            )}
         </div>
       </div>
       
