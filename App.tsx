@@ -19,7 +19,7 @@ const App: React.FC = () => {
   const [inputError, setInputError] = useState<string | null>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Refs for stability in effects
+  // Refs for stability in effects (Stale closure prevention)
   const inputTextRef = useRef(inputText);
   const hasGreetingPlayed = useRef(false);
 
@@ -34,9 +34,16 @@ const App: React.FC = () => {
       app.expand();
       
       try {
-        // Set Header to Black to match app theme
+        // Set Header to Black to match app theme (Native TMA behavior)
         app.setHeaderColor('#000000');
         app.setBackgroundColor('#000000');
+        
+        // Ensure MainButton defaults
+        app.MainButton.setParams({
+            text: 'ОТПРАВИТЬ',
+            color: '#ffffff',
+            text_color: '#000000'
+        });
       } catch (e) {
         console.warn("Failed to set TG colors", e);
       }
@@ -168,7 +175,7 @@ const App: React.FC = () => {
   };
 
   const handleTextSubmit = async () => {
-      // Use ref to get current value if called from closure
+      // Use ref to get current value inside closures/callbacks
       const text = inputTextRef.current;
       if (!text.trim()) return;
 
@@ -196,6 +203,8 @@ const App: React.FC = () => {
   };
 
   // --- Telegram MainButton Integration ---
+  
+  // Effect: Control MainButton Visibility and Progress
   useEffect(() => {
     if (!tg) return;
     const mainBtn = tg.MainButton;
@@ -209,13 +218,18 @@ const App: React.FC = () => {
 
     // Update visibility based on text content only in text mode
     if (isTextMode && inputText.trim().length > 0) {
-        if (appState === AppState.IDLE) mainBtn.show();
+        if (appState === AppState.IDLE) {
+            mainBtn.enable();
+            mainBtn.show();
+        }
     } else {
-        if (appState !== AppState.PROCESSING) mainBtn.hide(); 
-        // Note: we don't hide immediately if processing, so user sees spinner
+        if (appState !== AppState.PROCESSING) {
+             mainBtn.hide(); 
+        }
     }
   }, [tg, isTextMode, inputText, appState]);
 
+  // Effect: Bind Click Listener
   useEffect(() => {
     if (!tg) return;
     const mainBtn = tg.MainButton;
@@ -225,10 +239,6 @@ const App: React.FC = () => {
     };
 
     if (isTextMode) {
-        mainBtn.setText("ОТПРАВИТЬ");
-        // Enforce white text on black or standard
-        mainBtn.textColor = "#000000";
-        mainBtn.color = "#ffffff";
         mainBtn.onClick(onMainBtnClick);
     } else {
         mainBtn.offClick(onMainBtnClick);
@@ -237,7 +247,6 @@ const App: React.FC = () => {
 
     return () => {
         mainBtn.offClick(onMainBtnClick);
-        mainBtn.hide();
     };
   }, [tg, isTextMode]);
 
@@ -290,7 +299,7 @@ const App: React.FC = () => {
                          {/* Validation Message */}
                          <div className="flex justify-between items-center px-4 pb-3 min-h-[1.5rem]">
                              <span className="text-xs text-red-400 w-full truncate">{inputError}</span>
-                             {/* Removed custom Send button in favor of MainButton */}
+                             {/* Native MainButton replaces the HTML button */}
                          </div>
                     </div>
                     <button 
