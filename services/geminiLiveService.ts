@@ -311,14 +311,15 @@ export class GeminiLiveService {
 
   /**
    * Send audio chunk to Live API
+   * According to docs: use 'audio' field with mimeType including sample rate
    */
   private sendAudioChunk(base64Audio: string): void {
-    const message: LiveAPIMessage = {
+    const message: any = {
       realtimeInput: {
-        mediaChunks: [{
-          mimeType: "audio/pcm",
-          data: base64Audio
-        }]
+        audio: {
+          data: base64Audio,
+          mimeType: "audio/pcm;rate=16000"  // Include sample rate as per docs
+        }
       }
     };
 
