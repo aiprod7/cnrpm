@@ -9,11 +9,30 @@
 interface LiveAPIConfig {
   model: string;
   apiKey: string;
+  systemInstruction?: string;
+  responseModalities?: string[];
+  speechConfig?: {
+    voiceConfig?: {
+      prebuiltVoiceConfig?: {
+        voiceName: string;
+      };
+    };
+  };
+  generationConfig?: {
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+  };
 }
 
 interface AudioConfig {
   sampleRate: number;
   channels: number;
+}
+
+interface SessionResumptionHandle {
+  handle: string | null;
+  resumable: boolean;
 }
 
 type LiveAPIMessage = 
@@ -47,10 +66,24 @@ export class GeminiLiveService {
   private onConnectedCallback?: () => void;
   private onDisconnectedCallback?: () => void;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, systemInstruction?: string) {
     this.config = {
-      model: "gemini-live-2.5-flash-native-audio",
-      apiKey: apiKey
+      model: "gemini-2.5-flash-native-audio-preview-12-2025",  // Latest model from docs
+      apiKey: apiKey,
+      systemInstruction: systemInstruction,
+      responseModalities: ["AUDIO", "TEXT"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: "Kore"  // Russian-optimized voice
+          }
+        }
+      },
+      generationConfig: {
+        temperature: 0.8,
+        topP: 0.95,
+        topK: 40
+      }
     };
   }
 
@@ -107,17 +140,64 @@ export class GeminiLiveService {
   }
 
   /**
-   * Send initial setup message
+   * Send initial setup message with full configuration
    */
   private sendSetupMessage(): void {
-    const setupMessage: LiveAPIMessage = {
+    const setupMessage: any = {
       setup: {
-        model: `models/${this.config.model}`
+        model: `models/${this.config.model}`,
+        
+        // System instructions for Russian language support
+        systemInstruction: {
+          parts: [{
+            text: this.config.systemInstruction || 
+              "Ты - голосовой ассистент VoxLux. Отвечай на русском языке четко и лаконично. Используй естественную разговорную речь."
+          }]
+        },
+        
+        // Generation config
+        generationConfig: this.config.generationConfig || {
+          temperature: 0.8,
+          topP: 0.95,
+          topK: 40
+        },
+        
+        // Enable input transcription (for user's speech)
+        inputAudioTranscription: {},
+        
+        // Enable output transcription (for model's speech)
+        outputAudioTranscription: {},
+        
+        // VAD (Voice Activity Detection) configuration
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            disabled: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+            prefixPaddingMs: 20,
+            silenceDurationMs: 300  // 300ms silence = end of speech
+          }
+        },
+        
+        // Response modalities
+        responseModalities: this.config.responseModalities || ["AUDIO", "TEXT"],
+        
+        // Speech config (voice)
+        speechConfig: this.config.speechConfig || {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: "Kore"  // Russian-optimized voice
+            }
+          }
+        },
+        
+        // Session resumption for handling disconnects
+        sessionResumption: {}
       }
     };
     
     this.sendMessage(setupMessage);
-    console.log('📤 [Live API] Setup message sent');
+    console.log('📤 [Live API] Setup message sent with full config');
   }
 
   /**
@@ -227,35 +307,77 @@ export class GeminiLiveService {
    */
   private handleServerMessage(data: string): void {
     try {
-      const message: ServerMessage = JSON.parse(data);
+      const message: any = JSON.parse(data);
 
-      if ('setupComplete' in message) {
+      if (message.setupComplete) {
         console.log('✅ [Live API] Setup complete');
       } 
-      else if ('serverContent' in message) {
-        const parts = message.serverContent.modelTurn.parts;
+      else if (message.serverContent) {
+        const serverContent = message.serverContent;
         
-        for (const part of parts) {
-          // Handle text transcript
-          if (part.text && this.onTranscriptCallback) {
-            console.log('📝 [Live API] Transcript received:', part.text);
-            this.onTranscriptCallback(part.text);
-          }
-          
-          // Handle audio response
-          if (part.inlineData?.mimeType === 'audio/pcm' && this.onAudioResponseCallback) {
-            const audioData = this.base64ToArrayBuffer(part.inlineData.data);
-            console.log('🔊 [Live API] Audio response received');
-            this.onAudioResponseCallback(audioData);
+        // Handle INPUT transcription (user's speech)
+        if (serverContent.inputTranscription?.text) {
+          const inputText = serverContent.inputTranscription.text;
+          console.log('🎤 [Live API] Input transcription:', inputText);
+          if (this.onTranscriptCallback) {
+            this.onTranscriptCallback(inputText);
           }
         }
+        
+        // Handle OUTPUT transcription (model's speech)
+        if (serverContent.outputTranscription?.text) {
+          const outputText = serverContent.outputTranscription.text;
+          console.log('🤖 [Live API] Output transcription:', outputText);
+          // Could display model's response text alongside audio
+        }
+        
+        // Handle model turn (text/audio response)
+        if (serverContent.modelTurn?.parts) {
+          for (const part of serverContent.modelTurn.parts) {
+            // Handle text response
+            if (part.text) {
+              console.log('📝 [Live API] Model text:', part.text);
+            }
+            
+            // Handle audio response
+            if (part.inlineData?.mimeType === 'audio/pcm' && this.onAudioResponseCallback) {
+              const audioData = this.base64ToArrayBuffer(part.inlineData.data);
+              console.log('🔊 [Live API] Audio response received');
+              this.onAudioResponseCallback(audioData);
+            }
+          }
+        }
+        
+        // Handle interruptions (user interrupted model)
+        if (serverContent.interrupted) {
+          console.log('⏸️ [Live API] Generation interrupted');
+          // Stop current audio playback if any
+        }
+        
+        // Handle generation complete
+        if (serverContent.generationComplete) {
+          console.log('✅ [Live API] Generation complete');
+        }
+        
+        // Handle turn complete
+        if (serverContent.turnComplete) {
+          console.log('✅ [Live API] Turn complete');
+        }
       }
-      else if ('toolCall' in message) {
+      else if (message.toolCall) {
         console.log('🔧 [Live API] Tool call received:', message.toolCall);
         // Handle function calling if needed
       }
-      else if ('toolCallCancellation' in message) {
+      else if (message.toolCallCancellation) {
         console.log('🔧 [Live API] Tool call cancelled:', message.toolCallCancellation.ids);
+      }
+      else if (message.sessionResumptionUpdate) {
+        console.log('🔄 [Live API] Session resumption update:', message.sessionResumptionUpdate);
+        // Store handle for reconnection
+      }
+      else if (message.goAway) {
+        console.warn('⚠️ [Live API] GoAway received, connection will close in:', message.goAway.timeLeft);
+        // Prepare for reconnection
       }
 
     } catch (error) {

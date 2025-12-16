@@ -129,7 +129,8 @@ export class VoiceService {
     // Initialize Gemini Live API
     if (this.useLiveAPI && apiKey) {
       console.log("🚀 [VoiceService] Initializing Gemini Live API...");
-      this.liveService = new GeminiLiveService(apiKey);
+      const systemInstruction = "Ты - голосовой ассистент VoxLux. Отвечай на русском языке четко и лаконично. Используй естественную разговорную речь с эмоциональной окраской.";
+      this.liveService = new GeminiLiveService(apiKey, systemInstruction);
       this.setupLiveAPICallbacks();
     }
     
