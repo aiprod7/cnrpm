@@ -328,7 +328,9 @@ const App: React.FC = () => {
         {/* Header */}
         <header className="px-6 pt-6 pb-2 flex justify-between items-center opacity-80">
           <div className="flex flex-col">
-            <h1 className="text-xl font-light tracking-[0.2em] uppercase">VoxLux</h1>
+            <h1 className="text-xl font-light tracking-[0.2em] uppercase">
+              VoxLux <span className="text-xs text-gray-600 font-normal">v{process.env.APP_VERSION}</span>
+            </h1>
             <div className="text-[9px] text-gray-500 font-mono mt-0.5 tracking-tight">
               {process.env.BRANCH_NAME} • {process.env.TTS_MODEL_NAME}
             </div>

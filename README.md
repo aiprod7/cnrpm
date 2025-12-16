@@ -4,7 +4,14 @@
 
 # VoxLux - Голосовой ассистент с Google Gemini
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/aiprod7/cnrpm)
+[![Branch](https://img.shields.io/badge/branch-gemini-green.svg)](https://github.com/aiprod7/cnrpm/tree/gemini)
+[![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
+
 VoxLux — это современный голосовой ассистент, использующий **Google Gemini 2.5 Flash TTS** для преобразования текста в речь и распознавания голоса. Приложение работает как Telegram Mini App с поддержкой голосового и текстового ввода.
+
+> **Текущая версия**: v1.0.0 (ветка `gemini`)  
+> Для OpenRouter версии переключитесь на ветку [`main`](https://github.com/aiprod7/cnrpm/tree/main)
 
 ## 🎤 Возможности
 
@@ -113,10 +120,28 @@ export const BACKEND_API_URL = 'https://your-n8n-instance.com/webhook/...';
 export const USE_MOCK_BACKEND = false; // отключить моковый режим
 ```
 
-## 🌿 Ветки
+## 🌿 Ветки проекта
 
-- `main` - версия с OpenRouter API
-- `gemini` - версия с Google Gemini SDK (**текущая**)
+Проект поддерживает две основные ветки для разных реализаций:
+
+| Ветка | TTS Движок | STT Движок | API Ключ | Версия | Статус |
+|-------|-----------|-----------|----------|--------|--------|
+| **`gemini`** | Gemini 2.5 Flash TTS | Web Speech + Gemini Audio | `DEFAULT_GEMINI_API_KEY` | v1.0.0 | ✅ Активная |
+| **`main`** | Web Speech API | OpenRouter API | `OPENROUTER_API_KEY` | v0.5.0 | ✅ Стабильная |
+
+**Подробная документация**: См. [BRANCHES.md](BRANCHES.md) для полной информации о структуре веток.
+
+### Быстрое переключение:
+
+```bash
+# Gemini версия (текущая, лучшее качество TTS)
+git checkout gemini
+npm install && npm run dev
+
+# OpenRouter версия (кросс-платформенная)
+git checkout main
+npm install && npm run dev
+```
 
 ## 📖 Документация
 
