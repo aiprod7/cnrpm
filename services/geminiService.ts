@@ -72,10 +72,29 @@ export class GeminiLiveService {
       throw new Error("Live session is not active. Connect first.");
     }
     console.log(`📤 [GeminiLive] Sending text: "${text}"`);
-    // Send text as part of turn
-    // turnComplete: true tells model we finished our thought and expect a response
-    await this.session.send({ text, turnComplete: true });
-    console.log("✅ [GeminiLive] Text sent, waiting for audio response...");
+    
+    // Live API uses sendClientContent for text messages
+    // Format: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }
+    try {
+      await this.session.sendClientContent({
+        turns: [{ 
+          role: "user", 
+          parts: [{ text }] 
+        }],
+        turnComplete: true
+      });
+      console.log("✅ [GeminiLive] Text sent, waiting for audio response...");
+    } catch (err: any) {
+      console.error("❌ [GeminiLive] sendClientContent error:", err);
+      // Fallback: try alternative method
+      try {
+        await this.session.send({ text });
+        console.log("✅ [GeminiLive] Text sent via fallback method");
+      } catch (err2: any) {
+        console.error("❌ [GeminiLive] Fallback send error:", err2);
+        throw err2;
+      }
+    }
   }
 
   /**
