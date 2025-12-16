@@ -68,7 +68,7 @@ export class GeminiLiveService {
 
   constructor(apiKey: string, systemInstruction?: string) {
     this.config = {
-      model: "gemini-2.5-flash-native-audio-preview-12-2025",  // Latest model from docs
+      model: "gemini-2.5-flash-native-audio-dialog",  // Live API model (from rate limits dashboard)
       apiKey: apiKey,
       systemInstruction: systemInstruction,
       responseModalities: ["AUDIO"],  // Only AUDIO (docs forbid both TEXT and AUDIO)
