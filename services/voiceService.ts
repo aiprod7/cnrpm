@@ -1,5 +1,6 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { GeminiLiveService } from "./geminiLiveService";
+import { LiveTranscriptionService } from "./liveTranscriptionService";
 import { microphoneManager } from "./microphoneManager";
 
 // Helpers for decoding Gemini PCM Audio
@@ -114,7 +115,8 @@ export class VoiceService {
   
   // Gemini Live API (Real-time streaming)
   private liveService: GeminiLiveService | null = null;
-  private useLiveAPI: boolean = false; // DISABLED: Live API transcription not working with native-audio-dialog model
+  private liveTranscriptionService: LiveTranscriptionService | null = null;
+  private useLiveAPI: boolean = true; // ENABLED: Using native-audio-preview model with SDK live.connect()
   private liveTranscript: string = "";
   private liveTranscriptResolve: ((transcript: string) => void) | null = null;
 
@@ -124,13 +126,15 @@ export class VoiceService {
     console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
     this.ai = new GoogleGenAI({ apiKey });
     
-    // Initialize Gemini Live API
+    // Initialize Gemini Live Transcription API (native-audio-preview model with SDK)
     if (this.useLiveAPI && apiKey) {
-      console.log("🚀 [VoiceService] Initializing Gemini Live API...");
-      const systemInstruction = "Ты - голосовой ассистент VoxLux. Отвечай на русском языке четко и лаконично. Используй естественную разговорную речь с эмоциональной окраской.";
-      this.liveService = new GeminiLiveService(apiKey, systemInstruction);
-      this.setupLiveAPICallbacks();
+      console.log("🚀 [VoiceService] Initializing Gemini Live Transcription Service...");
+      this.liveTranscriptionService = new LiveTranscriptionService(apiKey);
+      console.log("✅ [VoiceService] Live Transcription Service ready");
     }
+    
+    // Keep legacy GeminiLiveService for TTS if needed
+    // (LiveTranscriptionService is focused on STT only)
     
     // Log available APIs
     console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
@@ -406,43 +410,76 @@ export class VoiceService {
   }
 
   /**
-   * Listen using Gemini Live API (real-time streaming)
+   * Listen using Gemini Live Transcription API (native-audio-preview model with SDK)
+   * Uses live.connect() for minimal latency streaming transcription
    */
   private async listenWithLiveAPI(): Promise<string> {
-    console.log("🔴 [Live API] Starting real-time streaming...");
+    console.log("🔴 [Live Transcription] Starting real-time streaming...");
     
     return new Promise(async (resolve, reject) => {
-      try {
-        // Connect to Live API
-        if (!this.liveService!.isConnected()) {
-          await this.liveService!.connect();
-        }
+      if (!this.liveTranscriptionService) {
+        console.error("❌ [Live Transcription] Service not initialized");
+        reject(new Error("Live Transcription Service not initialized"));
+        return;
+      }
 
+      try {
         // Reset transcript
         this.liveTranscript = "";
         this.liveTranscriptResolve = resolve;
 
-        // Start streaming microphone audio directly
-        // Note: inputAudioTranscription is configured in setup, no need for text instruction
-        await this.liveService!.startStreaming();
+        // Start live transcription session
+        await this.liveTranscriptionService.start({
+          onTranscriptUpdate: (text: string) => {
+            console.log("📝 [Live Transcription] Update:", text);
+            this.liveTranscript = text;
+            
+            // Call external callback for UI updates
+            if (this.onRealtimeTranscriptCallback) {
+              this.onRealtimeTranscriptCallback(text);
+            }
+          },
+          
+          onTranscriptComplete: (text: string) => {
+            console.log("✅ [Live Transcription] Complete:", this.liveTranscript);
+            // Don't resolve here - wait for stopListening() call
+          },
+          
+          onError: (error: Error) => {
+            console.error("❌ [Live Transcription] Error:", error);
+            // Don't reject immediately - let fallback handle it
+          },
+          
+          onClose: () => {
+            console.log("🔌 [Live Transcription] Session closed");
+            // Resolve with current transcript if we have one
+            if (this.liveTranscriptResolve) {
+              this.liveTranscriptResolve(this.liveTranscript.trim());
+              this.liveTranscriptResolve = null;
+            }
+          },
+          
+          onConnected: () => {
+            console.log("✅ [Live Transcription] Connected - speak now!");
+          }
+        });
         
-        console.log("✅ [Live API] Streaming started - speak now!");
-        console.log("⏰ [Live API] Will auto-stop after 10 seconds of streaming");
+        console.log("✅ [Live Transcription] Streaming started - speak now!");
+        console.log("⏰ [Live Transcription] Will auto-stop after 15 seconds of streaming");
         
-        // CRITICAL FIX: Auto-stop after 10 seconds
-        // Live API needs manual stop, but Promise was hanging forever
+        // Auto-stop after 15 seconds (longer than batch mode for continuous speech)
         setTimeout(() => {
-          if (this.liveService?.isCurrentlyStreaming()) {
-            console.log("⏰ [Live API] Auto-stopping after 10 seconds");
+          if (this.liveTranscriptionService?.isActive()) {
+            console.log("⏰ [Live Transcription] Auto-stopping after 15 seconds");
             this.stopListening();
           }
-        }, 10000); // 10 seconds max recording time
+        }, 15000); // 15 seconds max recording time
         
         // NOTE: Promise will resolve when stopListening() is called
         // Either by user clicking stop button or by auto-timeout above
         
       } catch (error) {
-        console.error("❌ [Live API] Failed to start:", error);
+        console.error("❌ [Live Transcription] Failed to start:", error);
         reject(error);
       }
     });
@@ -700,20 +737,49 @@ export class VoiceService {
     const startTime = performance.now();
     console.log("⏹️ [Stop] stopListening() called");
     
-    // Stop Live API streaming if active
-    if (this.useLiveAPI && this.liveService?.isCurrentlyStreaming()) {
-      console.log("⏹️ [Stop] Stopping Live API streaming...");
+    // Stop Live Transcription Service if active (SDK live.connect())
+    if (this.useLiveAPI && this.liveTranscriptionService?.isActive()) {
+      console.log("⏹️ [Stop] Stopping Live Transcription Service...");
+      
+      this.liveTranscriptionService.stop().then((finalTranscript) => {
+        console.log(`✅ [Stop] Live Transcription stopped, transcript: "${finalTranscript}"`);
+        
+        // Return accumulated transcript via promise resolver
+        if (this.liveTranscriptResolve) {
+          this.liveTranscriptResolve(finalTranscript);
+          this.liveTranscriptResolve = null;
+          this.liveTranscript = "";
+        }
+        
+        // Clear UI real-time display
+        if (this.onRealtimeTranscriptCallback) {
+          this.onRealtimeTranscriptCallback("");
+        }
+        
+        const totalTime = performance.now() - startTime;
+        console.log(`✅ [Stop] Total stopListening() time: ${totalTime.toFixed(0)}ms`);
+      }).catch((error) => {
+        console.error("❌ [Stop] Error stopping Live Transcription:", error);
+        if (this.liveTranscriptResolve) {
+          this.liveTranscriptResolve(this.liveTranscript.trim() || "");
+          this.liveTranscriptResolve = null;
+        }
+      });
+      return;
+    }
+    
+    // Fallback: Stop legacy Live API streaming if active
+    if (this.liveService?.isCurrentlyStreaming()) {
+      console.log("⏹️ [Stop] Stopping legacy Live API streaming...");
       this.liveService.stopStreaming();
       
-      // Return accumulated transcript
       if (this.liveTranscriptResolve) {
         const finalTranscript = this.liveTranscript.trim();
-        console.log(`✅ [Stop] Live API transcript: "${finalTranscript}"`);
+        console.log(`✅ [Stop] Legacy Live API transcript: "${finalTranscript}"`);
         this.liveTranscriptResolve(finalTranscript);
         this.liveTranscriptResolve = null;
         this.liveTranscript = "";
         
-        // Clear UI real-time display
         if (this.onRealtimeTranscriptCallback) {
           this.onRealtimeTranscriptCallback("");
         }
