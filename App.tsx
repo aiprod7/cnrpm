@@ -514,12 +514,31 @@ const App: React.FC = () => {
         <div className="fixed bottom-20 right-4 w-[90vw] max-w-md h-64 bg-black/95 border border-purple-500/50 rounded-lg shadow-2xl z-40 flex flex-col">
           <div className="px-3 py-2 bg-purple-900/50 border-b border-purple-500/30 flex justify-between items-center">
             <span className="text-purple-300 font-mono text-xs font-bold">🐛 Debug Logs</span>
-            <button 
-              onClick={() => setDebugLogs([])}
-              className="text-purple-400 hover:text-white text-xs font-mono px-2 py-1 rounded bg-purple-800/50 hover:bg-purple-700"
-            >
-              Очистить
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => {
+                  const logsText = debugLogs.join('\n');
+                  navigator.clipboard.writeText(logsText).then(() => {
+                    addDebugLog('📋 Логи скопированы в буфер');
+                    setTimeout(() => {
+                      setDebugLogs(prev => prev.filter(log => !log.includes('скопированы в буфер')));
+                    }, 2000);
+                  }).catch(err => {
+                    addDebugLog('❌ Ошибка копирования: ' + err.message);
+                  });
+                }}
+                className="text-purple-400 hover:text-white text-xs font-mono px-2 py-1 rounded bg-purple-800/50 hover:bg-purple-700"
+                title="Копировать в буфер"
+              >
+                📋
+              </button>
+              <button 
+                onClick={() => setDebugLogs([])}
+                className="text-purple-400 hover:text-white text-xs font-mono px-2 py-1 rounded bg-purple-800/50 hover:bg-purple-700"
+              >
+                Очистить
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 font-mono text-xs text-green-400 space-y-1">
             {debugLogs.length === 0 ? (

@@ -287,6 +287,26 @@ export class GeminiLiveService {
   }
 
   /**
+   * Send text message to Live API (for instructions or conversation)
+   */
+  sendTextMessage(text: string): void {
+    const message: any = {
+      clientContent: {
+        turns: [{
+          role: "user",
+          parts: [{
+            text: text
+          }]
+        }],
+        turnComplete: true
+      }
+    };
+
+    this.sendMessage(message);
+    console.log('📝 [Live API] Text message sent:', text.substring(0, 50) + '...');
+  }
+
+  /**
    * Send audio chunk to Live API
    */
   private sendAudioChunk(base64Audio: string): void {
@@ -308,20 +328,28 @@ export class GeminiLiveService {
   private handleServerMessage(data: string): void {
     try {
       const message: any = JSON.parse(data);
+      
+      // Debug: log ALL message types to diagnose transcription issues
+      console.log('📨 [Live API] Message type:', Object.keys(message).join(', '));
 
       if (message.setupComplete) {
-        console.log('✅ [Live API] Setup complete');
-      } 
+        console.log('✅ [Live API] Setup complete'); 
       else if (message.serverContent) {
         const serverContent = message.serverContent;
         
-        // Handle INPUT transcription (user's speech)
+        // Debug: log all fields in serverContent to understand what's coming
+        console.log('📦 [Live API] serverContent keys:', Object.keys(serverContent));
+        
+        // Handle INPUT transcription (user's speech - real-time)
+        // According to docs: msg.server_content.input_transcription.text
         if (serverContent.inputTranscription?.text) {
           const inputText = serverContent.inputTranscription.text;
-          console.log('🎤 [Live API] Input transcription:', inputText);
+          console.log('🎤 [Live API] ✅ Input transcription received:', inputText);
           if (this.onTranscriptCallback) {
             this.onTranscriptCallback(inputText);
           }
+        } else if (serverContent.inputTranscription) {
+          console.log('⚠️ [Live API] inputTranscription exists but no text:', serverContent.inputTranscription);
         }
         
         // Handle OUTPUT transcription (model's speech)
@@ -331,12 +359,17 @@ export class GeminiLiveService {
           // Could display model's response text alongside audio
         }
         
-        // Handle model turn (text/audio response)
+        // Handle model turn (text/audio response from model)
         if (serverContent.modelTurn?.parts) {
           for (const part of serverContent.modelTurn.parts) {
-            // Handle text response
+            // Handle text response (transcription result)
             if (part.text) {
-              console.log('📝 [Live API] Model text:', part.text);
+              const modelText = part.text;
+              console.log('📝 [Live API] Model response text:', modelText);
+              // This is the transcription result!
+              if (this.onTranscriptCallback) {
+                this.onTranscriptCallback(modelText);
+              }
             }
             
             // Handle audio response
