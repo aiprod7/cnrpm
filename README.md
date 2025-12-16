@@ -153,7 +153,7 @@ npm install && npm run dev
 
 **Для локальной разработки:**
 1. Создайте `.env.local` в корне проекта
-2. Добавьте строку: `GEMINI_API_KEY=AIzaSyAcRPhtq_hMRK2JXh2GaIQyX2yjV46ZCf0`
+2. Добавьте строку: `API_KEY=ваш_новый_api_ключ_из_google_ai_studio`
 
 **Для деплоя на GitHub:**
 1. Перейдите в Settings → Secrets → Actions
