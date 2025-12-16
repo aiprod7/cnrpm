@@ -2,19 +2,142 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# VoxLux - Голосовой ассистент с Google Gemini
 
-This contains everything you need to run your app locally.
+VoxLux — это современный голосовой ассистент, использующий **Google Gemini 2.5 Flash TTS** для преобразования текста в речь и распознавания голоса. Приложение работает как Telegram Mini App с поддержкой голосового и текстового ввода.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1xSKEvcAjJUIclFuxLfBokEH3EvpmEGB3
+## 🎤 Возможности
 
-## Run Locally
+- **Распознавание речи (STT)**: Использует Web Speech API и Google Gemini для точного распознавания русской речи
+- **Синтез речи (TTS)**: Генерирует естественную речь через **Gemini 2.5 Flash Preview TTS** с голосом **Kore**
+- **Telegram Mini App**: Нативная интеграция с Telegram для мобильных устройств
+- **Двухрежимный ввод**: Голосовой и текстовый режимы общения
+- **Визуализатор звука**: Динамическая анимация во время записи и воспроизведения
+- **N8N интеграция**: Подключение к внешним workflow через n8n
 
-**Prerequisites:**  Node.js
+## 🚀 Быстрый старт
 
+### Требования
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Node.js 16+
+- Google Gemini API ключ ([получить здесь](https://aistudio.google.com/apikey))
+
+### Локальная установка
+
+1. **Клонировать репозиторий**:
+   ```bash
+   git clone https://github.com/aiprod7/cnrpm.git
+   cd cnrpm
+   git checkout gemini
+   ```
+
+2. **Установить зависимости**:
+   ```bash
+   npm install
+   ```
+
+3. **Настроить API ключ** (выберите один из способов):
+
+   **Способ 1: Через переменные окружения (рекомендуется)**
+   
+   Создайте файл `.env.local` в корне проекта:
+   ```env
+   GEMINI_API_KEY=ваш_api_ключ_здесь
+   ```
+
+   **Способ 2: Через конфигурацию**
+   
+   Откройте `vite.config.ts` и замените дефолтный ключ на свой:
+   ```typescript
+   'process.env.DEFAULT_GEMINI_API_KEY': JSON.stringify('ваш_api_ключ_здесь')
+   ```
+
+   **Способ 3: Для GitHub Actions (деплой)**
+   
+   Добавьте секрет `DEFAULT_GEMINI_API_KEY` в настройках репозитория:
+   - GitHub → Settings → Secrets and variables → Actions
+   - New repository secret: `DEFAULT_GEMINI_API_KEY`
+
+4. **Запустить приложение**:
+   ```bash
+   npm run dev
+   ```
+
+   Откройте [http://localhost:3000](http://localhost:3000)
+
+## 📦 Деплой
+
+### Azure Static Web Apps (автоматический)
+
+Проект настроен для автоматического деплоя через GitHub Actions при пуше в ветку `gemini`.
+
+1. Добавьте секрет `DEFAULT_GEMINI_API_KEY` в GitHub (см. выше)
+2. Сделайте push в ветку `gemini`:
+   ```bash
+   git push origin gemini
+   ```
+3. GitHub Actions автоматически соберёт и задеплоит приложение
+
+### Ручная сборка
+
+```bash
+npm run build
+```
+
+Статические файлы будут в папке `dist/`.
+
+## 🔧 Конфигурация
+
+### Модель TTS
+
+В проекте используется **Gemini 2.5 Flash Preview TTS** с голосом **Kore** (женский, чёткий голос).
+
+Для смены голоса откройте `services/voiceService.ts` и измените `voiceName`:
+
+```typescript
+speechConfig: {
+  voiceConfig: {
+    prebuiltVoiceConfig: { voiceName: 'Puck' }, // или другой голос
+  },
+}
+```
+
+Доступные голоса: Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus и другие ([полный список](https://ai.google.dev/gemini-api/docs/speech-generation?hl=ru#voice-options)).
+
+### N8N Backend
+
+Для интеграции с n8n измените `constants.ts`:
+
+```typescript
+export const BACKEND_API_URL = 'https://your-n8n-instance.com/webhook/...';
+export const USE_MOCK_BACKEND = false; // отключить моковый режим
+```
+
+## 🌿 Ветки
+
+- `main` - версия с OpenRouter API
+- `gemini` - версия с Google Gemini SDK (**текущая**)
+
+## 📖 Документация
+
+- [Google Gemini TTS Documentation](https://ai.google.dev/gemini-api/docs/speech-generation?hl=ru)
+- [Google Gemini API Key](https://aistudio.google.com/apikey)
+- [Telegram Mini Apps](https://core.telegram.org/bots/webapps)
+
+## 🔑 Где вставить API ключ?
+
+**Для локальной разработки:**
+1. Создайте `.env.local` в корне проекта
+2. Добавьте строку: `GEMINI_API_KEY=AIzaSyAcRPhtq_hMRK2JXh2GaIQyX2yjV46ZCf0`
+
+**Для деплоя на GitHub:**
+1. Перейдите в Settings → Secrets → Actions
+2. Создайте секрет `DEFAULT_GEMINI_API_KEY` со значением вашего ключа
+
+**Для быстрого теста (НЕ рекомендуется для продакшена):**
+1. Откройте `vite.config.ts`
+2. Замените значение в строке `'process.env.DEFAULT_GEMINI_API_KEY'`
+
+## 📝 Лицензия
+
+MIT
