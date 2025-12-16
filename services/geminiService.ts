@@ -64,6 +64,61 @@ export class GeminiLiveService {
   }
 
   /**
+   * Connect for TTS only (no microphone needed)
+   * Use this when you just need to speak text without listening
+   */
+  async connectForTTS(config: LiveConfig): Promise<any> {
+    console.log("🔌 [GeminiLive] Connecting for TTS only...");
+    
+    // Initialize output AudioContext only
+    this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+      sampleRate: 24000 
+    });
+    await this.outputAudioContext.resume();
+    
+    // Setup visualizer analyser
+    this.analyserNode = this.outputAudioContext.createAnalyser();
+    this.analyserNode.fftSize = 256;
+    this.analyserNode.connect(this.outputAudioContext.destination);
+
+    // Connect to Gemini Live API (TTS mode)
+    this.sessionPromise = this.client.live.connect({
+      model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+      config: {
+        responseModalities: [Modality.AUDIO],
+        outputAudioTranscription: {},
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { voiceName: 'Kore' } 
+          }
+        },
+        systemInstruction: "Ты голосовой помощник. Просто озвучь текст который тебе передают, не добавляй ничего от себя. Говори на русском языке.",
+      },
+      callbacks: {
+        onopen: () => {
+          console.log("✅ [GeminiLive TTS] Connected");
+        },
+        onmessage: (msg: LiveServerMessage) => this.handleServerMessage(msg, config),
+        onclose: () => {
+          console.log("🔌 [GeminiLive TTS] Connection closed");
+          this.cleanup();
+          config.onClose();
+        },
+        onerror: (err: any) => {
+          console.error("❌ [GeminiLive TTS] Error:", err);
+          this.cleanup();
+          config.onError(err instanceof Error ? err : new Error(err?.message || "Unknown Error"));
+        }
+      }
+    });
+
+    this.session = await this.sessionPromise;
+    console.log("✅ [GeminiLive TTS] Session ready");
+    console.log("📋 [GeminiLive TTS] Session methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(this.session)));
+    return this.session;
+  }
+
+  /**
    * Send text message to active Live session.
    * Model will respond with audio stream (TTS).
    */
@@ -72,29 +127,35 @@ export class GeminiLiveService {
       throw new Error("Live session is not active. Connect first.");
     }
     console.log(`📤 [GeminiLive] Sending text: "${text}"`);
+    console.log(`📋 [GeminiLive] Available session methods:`, Object.getOwnPropertyNames(Object.getPrototypeOf(this.session)));
     
-    // Live API uses sendClientContent for text messages
-    // Format: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }
-    try {
-      await this.session.sendClientContent({
-        turns: [{ 
-          role: "user", 
-          parts: [{ text }] 
-        }],
-        turnComplete: true
-      });
-      console.log("✅ [GeminiLive] Text sent, waiting for audio response...");
-    } catch (err: any) {
-      console.error("❌ [GeminiLive] sendClientContent error:", err);
-      // Fallback: try alternative method
-      try {
-        await this.session.send({ text });
-        console.log("✅ [GeminiLive] Text sent via fallback method");
-      } catch (err2: any) {
-        console.error("❌ [GeminiLive] Fallback send error:", err2);
-        throw err2;
+    // Try different methods based on SDK version
+    const methods = ['sendClientContent', 'send', 'sendMessage', 'sendText'];
+    
+    for (const method of methods) {
+      if (typeof this.session[method] === 'function') {
+        console.log(`🔄 [GeminiLive] Trying method: ${method}`);
+        try {
+          if (method === 'sendClientContent') {
+            await this.session.sendClientContent({
+              turns: [{ role: "user", parts: [{ text }] }],
+              turnComplete: true
+            });
+          } else if (method === 'send') {
+            // @google/genai SDK format
+            await this.session.send({ text });
+          } else {
+            await this.session[method](text);
+          }
+          console.log(`✅ [GeminiLive] Text sent via ${method}`);
+          return;
+        } catch (err: any) {
+          console.warn(`⚠️ [GeminiLive] ${method} failed:`, err.message);
+        }
       }
     }
+    
+    throw new Error("No valid send method found on session object");
   }
 
   /**
@@ -191,7 +252,13 @@ export class GeminiLiveService {
     });
 
     this.session = await this.sessionPromise;
+    
+    // Debug: log available methods on session
     console.log("✅ [GeminiLive] Session established, ready for conversation");
+    console.log("📋 [GeminiLive] Session type:", typeof this.session);
+    console.log("📋 [GeminiLive] Session keys:", this.session ? Object.keys(this.session) : 'null');
+    console.log("📋 [GeminiLive] Session methods:", this.session ? Object.getOwnPropertyNames(Object.getPrototypeOf(this.session)) : 'null');
+    
     return this.session;
   }
 

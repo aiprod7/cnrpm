@@ -152,20 +152,19 @@ const App: React.FC = () => {
                 // Use Live API for TTS - connect if not already connected
                 if (!geminiService.isConnected) {
                     addDebugLog(`📡 Подключение к Live API для TTS...`);
-                    await geminiService.connect({
+                    await geminiService.connectForTTS({
                         onTranscriptUpdate: (text, isUser, isFinal) => {
-                            // TTS response - we don't need to update transcript since we already have it
                             if (!isUser && isFinal) {
-                                addDebugLog(`✅ TTS завершён`);
+                                addDebugLog(`✅ TTS текст: "${text}"`);
                             }
                         },
                         onClose: () => {
-                            addDebugLog(`🔌 Live API соединение закрыто`);
+                            addDebugLog(`🔌 Live API TTS закрыто`);
                             setAppState(AppState.IDLE);
                             setAnalyser(null);
                         },
                         onError: (err) => {
-                            addDebugLog(`❌ Live API ошибка: ${err.message}`);
+                            addDebugLog(`❌ Live API TTS ошибка: ${err.message}`);
                             setAppState(AppState.ERROR);
                             setTimeout(() => setAppState(AppState.IDLE), 3000);
                         }
@@ -174,10 +173,12 @@ const App: React.FC = () => {
                 }
                 
                 // Send text to Live API - it will respond with audio
+                addDebugLog(`📤 Отправка текста в Live API...`);
                 await geminiService.sendText(result.aiResponse);
                 
-                // Wait a bit for audio to finish playing (estimated based on text length)
-                const estimatedDuration = Math.max(2000, result.aiResponse.length * 80); // ~80ms per char
+                // Wait for audio to finish playing (estimated based on text length)
+                const estimatedDuration = Math.max(3000, result.aiResponse.length * 100);
+                addDebugLog(`⏳ Ожидание воспроизведения (~${Math.round(estimatedDuration/1000)}s)...`);
                 await new Promise(resolve => setTimeout(resolve, estimatedDuration));
                 
                 addDebugLog(`✅ TTS завершён`);

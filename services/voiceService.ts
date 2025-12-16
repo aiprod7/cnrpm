@@ -838,71 +838,56 @@ export class VoiceService {
     }
   }
 
-  // --- Google Gemini Text To Speech Only ---
+  // --- Text To Speech (Web Speech API - браузерный синтез) ---
 
   async speak(text: string): Promise<void> {
     if (!text) return;
 
-    // Ensure AudioContext is ready.
-    // NOTE: This call might fail to resume if not triggered by user gesture,
-    // which is why prepareForSpeech() should be called earlier in the flow.
-    await this.prepareForSpeech();
+    console.log("🔊 [TTS] Синтез речи через Web Speech API...");
     
-    if (!this.audioContext) return;
+    return new Promise((resolve, reject) => {
+      // Check if Web Speech API is supported
+      if (!('speechSynthesis' in window)) {
+        console.warn("⚠️ [TTS] Web Speech API не поддерживается в этом браузере");
+        resolve();
+        return;
+      }
 
-    try {
-        console.log("🔊 [TTS] Generating speech (model: gemini-2.0-flash-exp, voice: Kore)...");
-        const response = await this.ai.models.generateContent({
-          model: "gemini-2.0-flash-exp",
-          contents: [{ parts: [{ text }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: 'Kore' }, 
-                },
-            },
-          },
-        });
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
 
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        
-        if (!base64Audio) {
-            console.warn("No audio data received from Gemini TTS");
-            return;
-        }
+      const utterance = new SpeechSynthesisUtterance(text);
+      
+      // Configure voice settings for Russian
+      utterance.lang = 'ru-RU';
+      utterance.rate = 1.0;  // Normal speed
+      utterance.pitch = 1.0; // Normal pitch
+      utterance.volume = 1.0; // Full volume
 
-        // Decode PCM
-        const audioBuffer = await decodeAudioData(
-            decode(base64Audio),
-            this.audioContext,
-            24000,
-            1
-        );
+      // Try to find a Russian voice
+      const voices = window.speechSynthesis.getVoices();
+      const russianVoice = voices.find(v => v.lang.startsWith('ru')) || 
+                          voices.find(v => v.lang === 'ru-RU') ||
+                          voices[0]; // Fallback to first available
+      
+      if (russianVoice) {
+        utterance.voice = russianVoice;
+        console.log(`🔊 [TTS] Используется голос: ${russianVoice.name} (${russianVoice.lang})`);
+      }
 
-        // Play Audio
-        return new Promise((resolve, reject) => {
-            if (!this.audioContext) { 
-                resolve(); 
-                return; 
-            }
-            
-            const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.audioContext.destination);
-            
-            source.onended = () => {
-                resolve();
-            };
-            
-            source.start();
-        });
+      utterance.onend = () => {
+        console.log("✅ [TTS] Завершено");
+        resolve();
+      };
 
-    } catch (error) {
-        console.error("Gemini TTS Error:", error);
-        // Re-throw to let caller handle it
-        throw error;
-    }
+      utterance.onerror = (event) => {
+        console.error("❌ [TTS] Ошибка:", event.error);
+        resolve(); // Don't reject, just continue
+      };
+
+      // Start speaking
+      window.speechSynthesis.speak(utterance);
+    });
   }
 }
 
