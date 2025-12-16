@@ -113,7 +113,7 @@ export class VoiceService {
   
   // Gemini Live API (Real-time streaming)
   private liveService: GeminiLiveService | null = null;
-  private useLiveAPI: boolean = true; // Toggle between Live API and batch mode
+  private useLiveAPI: boolean = false; // DISABLED: Live API transcription not working with native-audio-dialog model
   private liveTranscript: string = "";
   private liveTranscriptResolve: ((transcript: string) => void) | null = null;
   
@@ -517,7 +517,15 @@ export class VoiceService {
         
         const setupTime = performance.now() - startTime;
         console.log(`🎙️ [Gemini STT] Recording setup complete in ${setupTime.toFixed(0)}ms - NOW RECORDING...`);
-        console.log("🎙️ [Gemini STT] Waiting for stopListening() to be called...");
+        console.log("🎙️ [Gemini STT] Will auto-stop after 10 seconds...");
+        
+        // Auto-stop recording after 10 seconds
+        setTimeout(() => {
+          if (this.isRecording) {
+            console.log("⏰ [Gemini STT] Auto-stopping after 10 seconds");
+            this.stopListening();
+          }
+        }, 10000);
 
       } catch (error) {
         console.error("❌ [Gemini STT] Failed to start recording:", error);
