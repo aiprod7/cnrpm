@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import packageJson from './package.json';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -17,7 +18,7 @@ export default defineConfig(({ mode }) => {
         'process.env.DEFAULT_GEMINI_API_KEY': JSON.stringify(env.DEFAULT_GEMINI_API_KEY || 'AIzaSyAcRPhtq_hMRK2JXh2GaIQyX2yjV46ZCf0'),
         'process.env.BRANCH_NAME': JSON.stringify(env.BRANCH_NAME || 'gemini'),
         'process.env.TTS_MODEL_NAME': JSON.stringify('gemini-2.5-flash-preview-tts (Kore)'),
-        'process.env.APP_VERSION': JSON.stringify('1.0.0')
+        'process.env.APP_VERSION': JSON.stringify(packageJson.version)
       },
       resolve: {
         alias: {
