@@ -1,7 +1,7 @@
 {
   "name": "voxlux",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.5.0-unified",
   "type": "module",
   "scripts": {
     "dev": "vite",

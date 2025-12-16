@@ -1,222 +1,380 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
 
-export type AudioDataCallback = (audioBuffer: AudioBuffer) => void;
-export type TranscriptCallback = (text: string, isUser: boolean) => void;
+/**
+ * Unified Gemini Live Service - Single Model for STT + TTS
+ * 
+ * Architecture: One WebSocket connection handles both speech-to-text and text-to-speech
+ * Model: gemini-2.5-flash-native-audio-preview-12-2025
+ * 
+ * Flow:
+ * 1. User speaks → Stream microphone PCM (16kHz) → Model transcribes (STT) via inputAudioTranscription
+ * 2. Model generates response → Returns audio stream (TTS 24kHz) + text captions
+ * 3. Play audio response through speakers with seamless buffering
+ * 
+ * Key Features:
+ * - Real-time STT: User sees their words as they speak
+ * - Real-time TTS: Model's audio response plays immediately
+ * - Interruption support: Can stop model mid-speech
+ * - Single connection: No need to switch between STT/TTS models
+ */
 
-interface LiveSessionConfig {
-  onAudioData: AudioDataCallback;
-  onTranscript: TranscriptCallback;
+// Callback interface for UI updates
+export interface LiveConfig {
+  onTranscriptUpdate: (text: string, isUser: boolean, isFinal: boolean) => void;
   onClose: () => void;
-  onError: (err: any) => void;
+  onError: (err: Error) => void;
 }
 
 export class GeminiLiveService {
   private client: GoogleGenAI;
   private sessionPromise: Promise<any> | null = null;
+  private session: any = null;
+  
+  // Audio Contexts
+  // Input: 16kHz (Gemini Live API requirement)
+  // Output: 24kHz (Gemini TTS standard)
   private inputAudioContext: AudioContext | null = null;
   private outputAudioContext: AudioContext | null = null;
+  
+  // Audio graph nodes
   private inputSource: MediaStreamAudioSourceNode | null = null;
   private processor: ScriptProcessorNode | null = null;
+  private analyserNode: AnalyserNode | null = null;
+  
+  // Audio playback queue (seamless streaming without gaps)
   private nextStartTime: number = 0;
   private sources: Set<AudioBufferSourceNode> = new Set();
-  
-  // Buffers for transcript aggregation
-  private currentInputTranscription: string = '';
-  private currentOutputTranscription: string = '';
+
+  // Text buffers for current conversation turn
+  private currentInputText = "";
+  private currentOutputText = "";
 
   constructor() {
-    this.client = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = (import.meta as any).env?.VITE_API_KEY || process.env.API_KEY || '';
+    this.client = new GoogleGenAI({ apiKey });
+    console.log("🎤 [GeminiLive] Service initialized (Unified STT+TTS model)");
   }
 
-  // Public property to expose analyser to UI
-  public analyserNode: AnalyserNode | null = null;
+  /**
+   * Get analyser node for audio visualization
+   */
+  public getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
+  }
 
-  async connect(config: LiveSessionConfig) {
-    this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+  /**
+   * Connect to Gemini Live API (Unified STT+TTS)
+   */
+  async connect(config: LiveConfig) {
+    console.log("🔌 [GeminiLive] Connecting to unified model...");
     
-    // Ensure contexts are running (vital for mobile/some browsers)
+    // 1. Initialize Audio Contexts
+    this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+      sampleRate: 16000 
+    });
+    this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+      sampleRate: 24000 
+    });
+
+    // Wake up contexts (critical for iOS/Safari autoplay policies)
     await this.inputAudioContext.resume();
     await this.outputAudioContext.resume();
+    console.log("🔊 [GeminiLive] Audio contexts ready (Input: 16kHz, Output: 24kHz)");
 
-    // Setup Visualizer Analyser
+    // 2. Setup visualizer analyser
     this.analyserNode = this.outputAudioContext.createAnalyser();
     this.analyserNode.fftSize = 256;
     this.analyserNode.connect(this.outputAudioContext.destination);
+    console.log("📊 [GeminiLive] Analyser connected for visualization");
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 3. Get microphone access
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      } 
+    });
+    console.log("🎤 [GeminiLive] Microphone access granted");
 
+    // 4. Connect to Gemini Live API with unified model
+    console.log("📡 [GeminiLive] Establishing WebSocket connection...");
     this.sessionPromise = this.client.live.connect({
-      model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+      // ✅ Unified model for both STT and TTS
+      model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+      
+      config: {
+        // Request AUDIO response (enables TTS)
+        responseModalities: [Modality.AUDIO], 
+        
+        // Enable input transcription (STT) - shows what user said
+        inputAudioTranscription: {}, 
+        
+        // Enable output transcription (Captions) - shows model's text
+        outputAudioTranscription: {},
+        
+        // Voice configuration for TTS
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { 
+              voiceName: 'Kore' // Russian-optimized female voice
+            } 
+          }
+        },
+        
+        systemInstruction: SYSTEM_INSTRUCTION,
+      },
+      
       callbacks: {
         onopen: () => {
-          console.log("Gemini Live Session Opened");
-          this.startAudioInput(stream);
+          console.log("✅ [GeminiLive] Connected (model: gemini-2.5-flash-native-audio-preview-12-2025)");
+          // Start streaming microphone audio
+          this.startAudioInputStreaming(stream);
         },
-        onmessage: async (message: LiveServerMessage) => {
-            this.handleMessage(message, config);
-        },
+        onmessage: (msg: LiveServerMessage) => this.handleServerMessage(msg, config),
         onclose: () => {
-          console.log("Gemini Live Session Closed");
-          this.sessionPromise = null;
+          console.log("🔌 [GeminiLive] Connection closed");
+          this.cleanup();
           config.onClose();
         },
-        onerror: (err) => {
-          console.error("Gemini Live Error", err);
-          this.sessionPromise = null;
-          config.onError(err);
+        onerror: (err: any) => {
+          console.error("❌ [GeminiLive] Error:", err);
+          this.cleanup();
+          const error = err instanceof Error ? err : new Error(err?.message || "Unknown Error");
+          config.onError(error);
         }
-      },
-      config: {
-        responseModalities: [Modality.AUDIO],
-        systemInstruction: SYSTEM_INSTRUCTION,
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } }, // Soft female voice
-        },
-        inputAudioTranscription: {}, 
-        outputAudioTranscription: {}, 
       }
     });
 
-    return this.sessionPromise;
+    this.session = await this.sessionPromise;
+    console.log("✅ [GeminiLive] Session established, ready for conversation");
+    return this.session;
   }
 
-  private startAudioInput(stream: MediaStream) {
+  /**
+   * Disconnect from Live API
+   */
+  async disconnect() {
+    console.log("⏹️ [GeminiLive] Disconnecting...");
+    
+    // Close session
+    if (this.session) {
+      try {
+        await this.session.close();
+      } catch (e) {
+        console.warn("⚠️ [GeminiLive] Error closing session:", e);
+      }
+      this.session = null;
+    }
+    
+    this.sessionPromise = null;
+    this.cleanup();
+  }
+
+  // --- Input Streaming (Microphone → Gemini) ---
+
+  private startAudioInputStreaming(stream: MediaStream) {
     if (!this.inputAudioContext) return;
 
+    console.log("🎤 [GeminiLive] Starting audio input streaming...");
+    
     this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
+    // Use ScriptProcessor to get raw PCM data
     this.processor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
 
+    let chunkCount = 0;
     this.processor.onaudioprocess = (e) => {
-      // If session is closed/null, stop processing
       if (!this.sessionPromise) return;
 
       const inputData = e.inputBuffer.getChannelData(0);
-      const pcmBlob = this.createPcmBlob(inputData);
+      // Convert Float32 (WebAudio) → Int16 (Gemini API requirement)
+      const pcm16 = this.float32ToInt16(inputData);
       
-      this.sessionPromise.then(session => {
-        // Double check in case it closed while waiting for promise
+      chunkCount++;
+      if (chunkCount % 10 === 0) {
+        console.log(`📤 [GeminiLive] Sent ${chunkCount} audio chunks`);
+      }
+
+      this.sessionPromise!.then(session => {
         if (session) {
-            try {
-                session.sendRealtimeInput({ media: pcmBlob });
-            } catch (err) {
-                console.debug("Error sending frame:", err);
-            }
+          try {
+            session.sendRealtimeInput({
+              media: {
+                mimeType: "audio/pcm;rate=16000",
+                data: this.arrayBufferToBase64(pcm16.buffer)
+              }
+            });
+          } catch (err) {
+            console.debug("⚠️ [GeminiLive] Error sending frame:", err);
+          }
         }
       }).catch(err => {
-        // Session initialization failed or session closed
-        console.debug("Session promise error:", err);
+        console.debug("⚠️ [GeminiLive] Session promise error:", err);
       });
     };
 
     this.inputSource.connect(this.processor);
+    // Connect to destination to keep processor active (but won't hear self - buffer is silent)
     this.processor.connect(this.inputAudioContext.destination);
+    
+    console.log("✅ [GeminiLive] Audio streaming started");
   }
 
-  private async handleMessage(message: LiveServerMessage, config: LiveSessionConfig) {
-    // 1. Audio Handling
-    const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+  // --- Output Handling (Gemini → Speakers + UI) ---
+
+  private async handleServerMessage(message: LiveServerMessage, config: LiveConfig) {
+    const content = message.serverContent;
+    if (!content) return;
+
+    // 1. Handle Audio Response (TTS)
+    const audioData = content.modelTurn?.parts?.[0]?.inlineData?.data;
     if (audioData && this.outputAudioContext) {
+      // Schedule playback without gaps
       this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
-      const audioBuffer = await this.decodeAudioData(audioData, this.outputAudioContext);
       
+      const audioBuffer = await this.decodeAudioData(audioData, this.outputAudioContext);
       const source = this.outputAudioContext.createBufferSource();
       source.buffer = audioBuffer;
       
-      // Connect to Analyser (Visualizer) and then Destination
+      // Connect to analyser (for visualization) then to speakers
       if (this.analyserNode) {
         source.connect(this.analyserNode);
       } else {
         source.connect(this.outputAudioContext.destination);
       }
-      
-      source.addEventListener('ended', () => {
-        this.sources.delete(source);
-      });
 
       source.start(this.nextStartTime);
       this.nextStartTime += audioBuffer.duration;
+      
+      source.onended = () => this.sources.delete(source);
       this.sources.add(source);
+      
+      console.log(`🔊 [GeminiLive] Playing audio chunk (${audioBuffer.duration.toFixed(2)}s)`);
     }
 
-    // 2. Interruption Handling
-    if (message.serverContent?.interrupted) {
-        this.sources.forEach(source => source.stop());
-        this.sources.clear();
-        this.nextStartTime = 0;
-        this.currentOutputTranscription = ''; // Reset partial
+    // 2. Handle Interruption (User interrupted model)
+    if (content.interrupted) {
+      console.log("⚠️ [GeminiLive] Interrupted - stopping playback");
+      // Stop all playing audio
+      this.sources.forEach(s => s.stop());
+      this.sources.clear();
+      this.nextStartTime = 0;
+      this.currentOutputText = "";
     }
 
-    // 3. Transcript Handling
-    if (message.serverContent?.outputTranscription) {
-        this.currentOutputTranscription += message.serverContent.outputTranscription.text;
-    }
-    if (message.serverContent?.inputTranscription) {
-        this.currentInputTranscription += message.serverContent.inputTranscription.text;
+    // 3. Handle Input Transcription (STT - what user said)
+    if (content.inputTranscription) {
+      const text = content.inputTranscription.text;
+      if (text) {
+        this.currentInputText += text;
+        // isFinal = false (user still might be speaking)
+        config.onTranscriptUpdate(this.currentInputText, true, false);
+        console.log(`📝 [GeminiLive] STT: "${this.currentInputText}"`);
+      }
     }
 
-    if (message.serverContent?.turnComplete) {
-        if (this.currentInputTranscription.trim()) {
-             config.onTranscript(this.currentInputTranscription, true);
-        }
-        if (this.currentOutputTranscription.trim()) {
-            config.onTranscript(this.currentOutputTranscription, false);
-        }
-        
-        this.currentInputTranscription = '';
-        this.currentOutputTranscription = '';
+    // 4. Handle Output Transcription (Captions - model's text)
+    if (content.outputTranscription) {
+      const text = content.outputTranscription.text;
+      if (text) {
+        this.currentOutputText += text;
+        // isFinal = false (model still generating)
+        config.onTranscriptUpdate(this.currentOutputText, false, false);
+        console.log(`💬 [GeminiLive] TTS Text: "${this.currentOutputText}"`);
+      }
+    }
+
+    // 5. Handle Turn Complete (Conversation turn finished)
+    if (content.turnComplete) {
+      console.log("✅ [GeminiLive] Turn complete");
+      
+      // Finalize user message
+      if (this.currentInputText.trim()) {
+        config.onTranscriptUpdate(this.currentInputText, true, true);
+        this.currentInputText = "";
+      }
+      
+      // Finalize model message
+      if (this.currentOutputText.trim()) {
+        config.onTranscriptUpdate(this.currentOutputText, false, true);
+        this.currentOutputText = "";
+      }
     }
   }
 
-  async disconnect() {
-    this.sessionPromise = null; // Prevent new sends
+  // --- Cleanup ---
+
+  private cleanup() {
+    console.log("🧹 [GeminiLive] Cleaning up resources...");
     
-    // Cleanup Audio
+    // Stop all playing audio
     this.sources.forEach(s => s.stop());
     this.sources.clear();
     
+    // Disconnect audio nodes
     if (this.processor) {
-        this.processor.disconnect();
-        this.processor = null;
+      this.processor.disconnect();
+      this.processor = null;
     }
     if (this.inputSource) {
-        this.inputSource.disconnect();
-        this.inputSource = null;
+      this.inputSource.disconnect();
+      this.inputSource = null;
     }
-    if (this.inputAudioContext) {
-        if (this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
-        this.inputAudioContext = null;
-    }
-    if (this.outputAudioContext) {
-        if (this.outputAudioContext.state !== 'closed') await this.outputAudioContext.close();
-        this.outputAudioContext = null;
-    }
-  }
-
-  // --- Helpers ---
-
-  private createPcmBlob(data: Float32Array): { data: string, mimeType: string } {
-    const l = data.length;
-    const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) {
-      int16[i] = data[i] * 32768;
-    }
-    const uint8 = new Uint8Array(int16.buffer);
-    let binary = '';
-    const len = uint8.byteLength;
-    for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(uint8[i]);
-    }
-    const b64 = btoa(binary);
     
-    return {
-      data: b64,
-      mimeType: 'audio/pcm;rate=16000',
-    };
+    // Close audio contexts
+    if (this.inputAudioContext && this.inputAudioContext.state !== 'closed') {
+      this.inputAudioContext.close();
+      this.inputAudioContext = null;
+    }
+    if (this.outputAudioContext && this.outputAudioContext.state !== 'closed') {
+      this.outputAudioContext.close();
+      this.outputAudioContext = null;
+    }
+    
+    this.analyserNode = null;
+    
+    // Reset buffers
+    this.currentInputText = "";
+    this.currentOutputText = "";
+    this.nextStartTime = 0;
   }
 
+  // --- Audio Utilities ---
+
+  /**
+   * Convert Float32Array (WebAudio) to Int16Array (Gemini API)
+   */
+  private float32ToInt16(float32: Float32Array): Int16Array {
+    const int16 = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return int16;
+  }
+
+  /**
+   * Convert ArrayBuffer to Base64 string
+   */
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  /**
+   * Decode Gemini audio response (Base64 PCM) to AudioBuffer
+   * Gemini returns raw PCM 24kHz Int16 (no WAV headers)
+   */
   private async decodeAudioData(base64: string, ctx: AudioContext): Promise<AudioBuffer> {
+    // Decode base64 to binary
     const binaryString = atob(base64);
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
@@ -224,16 +382,21 @@ export class GeminiLiveService {
       bytes[i] = binaryString.charCodeAt(i);
     }
     
+    // Convert to Int16Array (PCM format)
     const dataInt16 = new Int16Array(bytes.buffer);
-    const frameCount = dataInt16.length; 
-    const buffer = ctx.createBuffer(1, frameCount, 24000);
+    
+    // Create AudioBuffer (1 channel, 24kHz sample rate)
+    const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
     const channelData = buffer.getChannelData(0);
     
-    for (let i = 0; i < frameCount; i++) {
-        channelData[i] = dataInt16[i] / 32768.0;
+    // Convert Int16 to Float32 (WebAudio format)
+    for (let i = 0; i < dataInt16.length; i++) {
+      channelData[i] = dataInt16[i] / 32768.0;
     }
+    
     return buffer;
   }
 }
 
+// Export singleton instance
 export const geminiService = new GeminiLiveService();

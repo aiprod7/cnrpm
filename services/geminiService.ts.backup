@@ -1,0 +1,288 @@
+import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { SYSTEM_INSTRUCTION } from "../constants";
+
+/**
+ * Unified Gemini Live Service - Single Model for STT + TTS
+ * Architecture: One WebSocket connection handles both speech-to-text and text-to-speech
+ * Model: gemini-2.5-flash-native-audio-preview-12-2025
+ * 
+ * Flow:
+ * 1. Stream microphone audio → Model transcribes (STT) via inputAudioTranscription
+ * 2. Model generates response → Audio stream (TTS) + text captions
+ * 3. Play audio response through speakers
+ */
+
+// Callback interface for UI updates
+export interface LiveConfig {
+  onTranscriptUpdate: (text: string, isUser: boolean, isFinal: boolean) => void;
+  onClose: () => void;
+  onError: (err: Error) => void;
+}
+
+export class GeminiLiveService {
+  private client: GoogleGenAI;
+  private sessionPromise: Promise<any> | null = null;
+  private session: any = null;
+  
+  // Audio Contexts (Input: 16kHz for Gemini, Output: 24kHz standard)
+  private inputAudioContext: AudioContext | null = null;
+  private outputAudioContext: AudioContext | null = null;
+  
+  // Audio graph nodes
+  private inputSource: MediaStreamAudioSourceNode | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private analyserNode: AnalyserNode | null = null;
+  
+  // Audio playback queue (for seamless streaming)
+  private nextStartTime: number = 0;
+  private sources: Set<AudioBufferSourceNode> = new Set();
+
+  // Text buffers for current conversation turn
+  private currentInputText = "";
+  private currentOutputText = "";
+
+  constructor() {
+    const apiKey = (import.meta as any).env?.VITE_API_KEY || process.env.API_KEY || '';
+    this.client = new GoogleGenAI({ apiKey });
+    console.log("🎤 [GeminiLive] Service initialized (Unified STT+TTS)");
+  }
+
+  /**
+   * Get analyser node for visualization
+   */
+  public getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  /**
+   * Connect to Gemini Live API (Unified STT+TTS)
+   */
+  async connect(config: LiveConfig) {
+    console.log("🔌 [GeminiLive] Connecting to Gemini Live API...");
+    
+    // 1. Initialize Audio Contexts
+    this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+      sampleRate: 16000 
+    });
+    this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+      sampleRate: 24000 
+    });
+
+    // Wake up contexts (critical for iOS/Safari)
+    await this.inputAudioContext.resume();
+    await this.outputAudioContext.resume();
+    console.log("🔊 [GeminiLive] Audio contexts ready (Input: 16kHz, Output: 24kHz)");
+
+    // 2. Setup visualizer analyser
+    this.analyserNode = this.outputAudioContext.createAnalyser();
+    this.analyserNode.fftSize = 256;
+    this.analyserNode.connect(this.outputAudioContext.destination);
+
+    // 3. Get microphone access
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true
+      } 
+    });
+    console.log("🎤 [GeminiLive] Microphone access granted");
+
+    // 4. Connect to Gemini Live API with unified model
+    this.sessionPromise = this.client.live.connect({
+      model: 'gemini-2.5-flash-native-audio-preview-12-2025', // ✅ Unified model
+      
+      config: {
+        // Request AUDIO response (TTS)
+        responseModalities: [Modality.AUDIO], 
+        
+        // Enable input transcription (STT) - to see what user said
+        inputAudioTranscription: {}, 
+        
+        // Enable output transcription (Captions) - to see model's text
+        outputAudioTranscription: {},
+        
+        // Voice configuration for TTS
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { 
+              voiceName: 'Kore' // Russian-optimized voice
+            } 
+          }
+        },
+        
+        systemInstruction: SYSTEM_INSTRUCTION,
+      },
+      
+      callbacks: {
+        onopen: () => {
+          console.log("✅ [GeminiLive] Connected to unified model (STT+TTS)");
+          // Start streaming microphone audio
+          this.startAudioInputStreaming(stream);
+        },
+        onmessage: (msg: LiveServerMessage) => this.handleServerMessage(msg, config),
+        onclose: () => {
+          console.log("🔌 [GeminiLive] Connection closed");
+          this.cleanup();
+          config.onClose();
+        },
+        onerror: (err: any) => {
+          console.error("❌ [GeminiLive] Error:", err);
+          this.cleanup();
+          const error = err instanceof Error ? err : new Error(err?.message || "Unknown Error");
+          config.onError(error);
+        }
+      }
+    });
+
+    this.session = await this.sessionPromise;
+    console.log("✅ [GeminiLive] Session established");
+    return this.session;
+  }
+
+  /**
+   * Disconnect from Live API
+   */
+  async disconnect() {
+    console.log("⏹️ [GeminiLive] Disconnecting...");
+    this.sessionPromise = null;
+            try {
+                session.sendRealtimeInput({ media: pcmBlob });
+            } catch (err) {
+                console.debug("Error sending frame:", err);
+            }
+        }
+      }).catch(err => {
+        // Session initialization failed or session closed
+        console.debug("Session promise error:", err);
+      });
+    };
+
+    this.inputSource.connect(this.processor);
+    this.processor.connect(this.inputAudioContext.destination);
+  }
+
+  private async handleMessage(message: LiveServerMessage, config: LiveSessionConfig) {
+    // 1. Audio Handling
+    const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+    if (audioData && this.outputAudioContext) {
+      this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+      const audioBuffer = await this.decodeAudioData(audioData, this.outputAudioContext);
+      
+      const source = this.outputAudioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      
+      // Connect to Analyser (Visualizer) and then Destination
+      if (this.analyserNode) {
+        source.connect(this.analyserNode);
+      } else {
+        source.connect(this.outputAudioContext.destination);
+      }
+      
+      source.addEventListener('ended', () => {
+        this.sources.delete(source);
+      });
+
+      source.start(this.nextStartTime);
+      this.nextStartTime += audioBuffer.duration;
+      this.sources.add(source);
+    }
+
+    // 2. Interruption Handling
+    if (message.serverContent?.interrupted) {
+        this.sources.forEach(source => source.stop());
+        this.sources.clear();
+        this.nextStartTime = 0;
+        this.currentOutputTranscription = ''; // Reset partial
+    }
+
+    // 3. Transcript Handling
+    if (message.serverContent?.outputTranscription) {
+        this.currentOutputTranscription += message.serverContent.outputTranscription.text;
+    }
+    if (message.serverContent?.inputTranscription) {
+        this.currentInputTranscription += message.serverContent.inputTranscription.text;
+    }
+
+    if (message.serverContent?.turnComplete) {
+        if (this.currentInputTranscription.trim()) {
+             config.onTranscript(this.currentInputTranscription, true);
+        }
+        if (this.currentOutputTranscription.trim()) {
+            config.onTranscript(this.currentOutputTranscription, false);
+        }
+        
+        this.currentInputTranscription = '';
+        this.currentOutputTranscription = '';
+    }
+  }
+
+  async disconnect() {
+    this.sessionPromise = null; // Prevent new sends
+    
+    // Cleanup Audio
+    this.sources.forEach(s => s.stop());
+    this.sources.clear();
+    
+    if (this.processor) {
+        this.processor.disconnect();
+        this.processor = null;
+    }
+    if (this.inputSource) {
+        this.inputSource.disconnect();
+        this.inputSource = null;
+    }
+    if (this.inputAudioContext) {
+        if (this.inputAudioContext.state !== 'closed') await this.inputAudioContext.close();
+        this.inputAudioContext = null;
+    }
+    if (this.outputAudioContext) {
+        if (this.outputAudioContext.state !== 'closed') await this.outputAudioContext.close();
+        this.outputAudioContext = null;
+    }
+  }
+
+  // --- Helpers ---
+
+  private createPcmBlob(data: Float32Array): { data: string, mimeType: string } {
+    const l = data.length;
+    const int16 = new Int16Array(l);
+    for (let i = 0; i < l; i++) {
+      int16[i] = data[i] * 32768;
+    }
+    const uint8 = new Uint8Array(int16.buffer);
+    let binary = '';
+    const len = uint8.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(uint8[i]);
+    }
+    const b64 = btoa(binary);
+    
+    return {
+      data: b64,
+      mimeType: 'audio/pcm;rate=16000',
+    };
+  }
+
+  private async decodeAudioData(base64: string, ctx: AudioContext): Promise<AudioBuffer> {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    const dataInt16 = new Int16Array(bytes.buffer);
+    const frameCount = dataInt16.length; 
+    const buffer = ctx.createBuffer(1, frameCount, 24000);
+    const channelData = buffer.getChannelData(0);
+    
+    for (let i = 0; i < frameCount; i++) {
+        channelData[i] = dataInt16[i] / 32768.0;
+    }
+    return buffer;
+  }
+}
+
+export const geminiService = new GeminiLiveService();
