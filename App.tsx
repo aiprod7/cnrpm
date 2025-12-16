@@ -74,7 +74,24 @@ const App: React.FC = () => {
     if (hasGreetingPlayed.current) return;
     hasGreetingPlayed.current = true;
 
-    // 2. Show greeting text only
+    // 2. Initialize microphone permission manager early (prevents repeated dialogs)
+    (async () => {
+      try {
+        addDebugLog('🎤 Инициализация разрешений микрофона...');
+        const { microphoneManager } = await import('./services/microphoneManager');
+        const granted = await microphoneManager.initialize();
+        if (granted) {
+          addDebugLog('✅ Разрешение микрофона кешировано');
+        } else {
+          addDebugLog('⚠️ Разрешение микрофона не получено (будет запрошено при использовании)');
+        }
+      } catch (error: any) {
+        console.error('Failed to initialize microphone manager:', error);
+        addDebugLog(`❌ Ошибка инициализации микрофона: ${error.message}`);
+      }
+    })();
+
+    // 3. Show greeting text only
     setMessages([{
       id: 'init',
       role: 'model',

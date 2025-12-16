@@ -1,5 +1,6 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { GeminiLiveService } from "./geminiLiveService";
+import { microphoneManager } from "./microphoneManager";
 
 // Helpers for decoding Gemini PCM Audio
 function decode(base64: string) {
@@ -116,9 +117,6 @@ export class VoiceService {
   private useLiveAPI: boolean = false; // DISABLED: Live API transcription not working with native-audio-dialog model
   private liveTranscript: string = "";
   private liveTranscriptResolve: ((transcript: string) => void) | null = null;
-  
-  // Permission cache - to avoid repeated browser permission prompts
-  private microphonePermissionGranted: boolean = false;
 
   constructor() {
     // Initialize Google GenAI
@@ -137,9 +135,6 @@ export class VoiceService {
     // Log available APIs
     console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
     console.log("AudioContext available:", typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined');
-    
-    // Check microphone permission status on init
-    this.checkMicrophonePermission();
     
     // Initialize Speech Recognition as fallback (Browser Native)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -191,47 +186,47 @@ export class VoiceService {
     this.onRealtimeTranscriptCallback = callback;
   }
 
-  // Check microphone permission without prompting user
-  private async checkMicrophonePermission(): Promise<void> {
-    try {
-      // navigator.permissions.query may not be available in all WebViews
-      if (navigator.permissions && navigator.permissions.query) {
-        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-        this.microphonePermissionGranted = result.state === 'granted';
-        console.log("Microphone permission status:", result.state);
-        
-        // Listen for permission changes
-        result.onchange = () => {
-          this.microphonePermissionGranted = result.state === 'granted';
-          console.log("Microphone permission changed to:", result.state);
-        };
-      }
-    } catch (e) {
-      console.log("Permission API not available, will check on first use");
-    }
-  }
-
-  // Request microphone access once and cache the stream
+  /**
+   * Request microphone access using MicrophoneManager (cached permission)
+   * This prevents repeated permission dialogs in Telegram Mini App
+   */
   async requestMicrophoneAccess(): Promise<MediaStream | null> {
-    // If we already have a stream, return it
+    // Check if MicrophoneManager already has permission cached
+    if (!microphoneManager.isReady()) {
+      console.log("🎤 [VoiceService] No cached permission, initializing MicrophoneManager...");
+      const granted = await microphoneManager.initialize();
+      
+      if (!granted) {
+        console.error("❌ [VoiceService] Microphone permission denied");
+        console.log("💡 Instructions:", microphoneManager.getPermissionInstructions());
+        return null;
+      }
+    }
+
+    // If we already have an active stream, return it
     if (this.stream && this.stream.active) {
-      console.log("Reusing existing microphone stream");
+      console.log("✅ [VoiceService] Reusing existing microphone stream");
       return this.stream;
     }
 
     try {
-      console.log("Requesting microphone access...");
+      console.log("🎤 [VoiceService] Requesting microphone stream...");
       
-      // Try with basic constraints first (better compatibility with Telegram WebView)
+      // Request microphone stream (permission already cached by MicrophoneManager)
       this.stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true  // Simplified constraints for Telegram Mini Apps
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 16000,
+          channelCount: 1
+        }
       });
       
-      this.microphonePermissionGranted = true;
-      console.log("✅ Microphone access granted, stream cached");
+      console.log("✅ [VoiceService] Microphone stream created");
       return this.stream;
     } catch (error: any) {
-      console.error("❌ Microphone access error:", error);
+      console.error("❌ [VoiceService] Microphone stream error:", error);
       console.error("Error details:", {
         name: error?.name,
         message: error?.message,
@@ -244,6 +239,7 @@ export class VoiceService {
         console.error("💡 This often happens in Telegram Mini Apps - try using text input instead");
       } else if (error.name === 'NotAllowedError') {
         console.error("❌ NotAllowedError: User denied microphone permission");
+        console.error("💡 Instructions:", microphoneManager.getPermissionInstructions());
       } else if (error.name === 'NotFoundError') {
         console.error("❌ NotFoundError: No microphone device found");
       } else if (error.name === 'OverconstrainedError') {
