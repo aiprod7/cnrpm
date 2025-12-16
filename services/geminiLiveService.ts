@@ -163,11 +163,17 @@ export class GeminiLiveService {
         },
         
         // Enable input transcription (for user's speech)
-        // Official docs show empty object - model is inferred automatically
-        inputAudioTranscription: {},
+        // CRITICAL: native-audio-dialog models REQUIRE explicit transcription model
+        // Empty {} causes "Cannot extract voices from a non-audio request" error
+        // See: https://github.com/google/adk-docs/issues/335
+        inputAudioTranscription: {
+          model: "models/gemini-2.0-flash-exp"
+        },
         
         // Enable output transcription (for model's speech)
-        outputAudioTranscription: {},
+        outputAudioTranscription: {
+          model: "models/gemini-2.0-flash-exp"
+        },
         
         // VAD (Voice Activity Detection) configuration
         realtimeInputConfig: {
