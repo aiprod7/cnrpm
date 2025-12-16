@@ -2,13 +2,14 @@
 
 ## ✅ Текущая конфигурация
 
-### Модель для STT (ОБНОВЛЕНО!)
+### Модели в проекте (ОБНОВЛЕНО!)
 ```typescript
-// 🚀 NEW: Real-time streaming с Gemini Live API
-model: "gemini-live-2.5-flash-native-audio"  // ✅ WebSocket streaming!
+// 🎤 STT (Speech-to-Text): Распознавание речи пользователя
+model: "gemini-2.5-flash-native-audio-preview-12-2025"  // ✅ Live API (WebSocket)
+fallback: "gemini-2.5-flash"  // ✅ Batch mode (REST API)
 
-// 📦 OLD: Batch mode (fallback)
-model: "gemini-2.5-flash"  // ✅ WAV upload для транскрипции
+// 🔊 TTS (Text-to-Speech): Озвучка ответов бота
+model: "gemini-2.5-flash-preview-tts"  // ✅ Voice: Kore (Russian-optimized)
 ```
 
 **🎯 КРИТИЧЕСКОЕ ОБНОВЛЕНИЕ**: Проект переведен на **Gemini Live API** для real-time транскрипции!
@@ -322,24 +323,31 @@ catch (error: any) {
 
 | Задача | Модель | Режим | Задержка | Результат |
 |--------|--------|-------|----------|-----------|
-| **STT Real-time** 🚀 | `gemini-live-2.5-flash-native-audio` | WebSocket streaming | ~100-300ms | Real-time транскрипт |
+| **STT Real-time** 🚀 | `gemini-2.5-flash-native-audio-preview-12-2025` | WebSocket streaming | ~100-300ms | Real-time транскрипт |
 | **STT Batch** 📦 | `gemini-2.5-flash` | REST API (fallback) | ~1-2s | Финальный текст |
-| **TTS** | `gemini-2.5-flash-preview-tts` | REST API | ~800ms | Аудио (PCM 24kHz) |
+| **TTS** 🔊 | `gemini-2.5-flash-preview-tts` (voice: Kore) | REST API | ~800ms | Аудио (PCM 24kHz) |
 
-### 🚀 НОВАЯ АРХИТЕКТУРА: Live API First!
+### 🚀 НОВАЯ АРХИТЕКТУРА: Live API + Specialized TTS
 
 ```typescript
-// ✅ PRIMARY: Real-time streaming
-model: "gemini-live-2.5-flash-native-audio"
+// 🎤 STT PRIMARY: Real-time streaming (распознавание речи)
+model: "gemini-2.5-flash-native-audio-preview-12-2025"
 protocol: "WebSocket"
 latency: "~100-300ms"
 features: ["real-time transcript", "streaming", "barge-in", "affective dialog"]
 
-// 📦 FALLBACK: Batch mode
+// 📦 STT FALLBACK: Batch mode
 model: "gemini-2.5-flash"
 protocol: "REST API"
 latency: "~1-2s"
 features: ["single request", "WAV upload"]
+
+// 🔊 TTS: Text-to-Speech (озвучка ответов)
+model: "gemini-2.5-flash-preview-tts"
+voice: "Kore" (Russian-optimized, female)
+protocol: "REST API"
+latency: "~800ms"
+features: ["natural speech", "emotional tone", "24kHz PCM output"]
 ```
 
 ### ⚠️ КРИТИЧНО: НЕ использовать TTS модель для STT!
@@ -637,12 +645,14 @@ try {
 ## 🎯 Итоги
 
 ### ✅ Что работает (NEW Architecture!):
-1. **Модель STT**: `gemini-live-2.5-flash-native-audio` 🚀 (Live API)
-2. **Протокол**: WebSocket streaming для real-time транскрипции ✅
-3. **Real-time UI**: Мгновенное отображение текста в синей карточке ✅
-4. **Формат аудио**: PCM 16kHz mono → streaming chunks ✅
-5. **Fallback цепочка**: Live API → Web Speech → Gemini Batch ✅
-6. **Логирование**: Детальное для отладки всех режимов ✅
+1. **Модель STT**: `gemini-2.5-flash-native-audio-preview-12-2025` 🚀 (Live API)
+2. **Модель TTS**: `gemini-2.5-flash-preview-tts` 🔊 (voice: Kore, Russian)
+3. **Протокол**: WebSocket streaming для real-time транскрипции ✅
+4. **Real-time UI**: Мгновенное отображение текста в синей карточке ✅
+5. **Формат аудио**: PCM 16kHz mono → streaming chunks (input), PCM 24kHz (output) ✅
+6. **Fallback цепочка**: Live API → Web Speech → Gemini Batch ✅
+7. **Debug Panel**: Видимые логи в UI для отладки в Telegram Mini Apps ✅
+8. **Транскрипт в чате**: Текст пользователя отображается перед обработкой ✅
 
 ### 🔧 Исправлено ранее:
 1. **Кнопка Stop**: Правильно останавливает запись и сбрасывает UI ✅
@@ -664,8 +674,11 @@ try {
 4. Retry логика для WebSocket reconnection
 5. Voice activity detection (VAD) для автостопа
 
----
-
 **Последнее обновление**: 16 декабря 2025  
+**Версия**: 1.2.0 (ветка `gemini`)  
+**Архитектура**: 
+- **STT**: Gemini Live API `gemini-2.5-flash-native-audio-preview-12-2025` (WebSocket) + Batch fallback
+- **TTS**: Gemini TTS API `gemini-2.5-flash-preview-tts` (REST, voice: Kore)
+- **Debug**: UI Debug Panel для отладки в Telegram Mini Apps (без доступа к консоли)
 **Версия**: 1.1.0 (ветка `gemini`)  
 **Архитектура**: Gemini Live API (WebSocket streaming) + Batch fallback

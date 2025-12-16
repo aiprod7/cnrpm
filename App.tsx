@@ -20,6 +20,16 @@ const App: React.FC = () => {
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const [realtimeTranscript, setRealtimeTranscript] = useState<string>(""); // Live API real-time display
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Debug logs (visible in UI for Telegram Mini Apps debugging)
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const addDebugLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+    const logEntry = `[${timestamp}] ${message}`;
+    setDebugLogs(prev => [...prev.slice(-20), logEntry]); // Keep last 20 logs
+    console.log(message); // Still log to console too
+  };
 
   // Refs for stability in effects (Stale closure prevention)
   const inputTextRef = useRef(inputText);
@@ -75,20 +85,22 @@ const App: React.FC = () => {
 
   // --- Shared Processing Logic ---
   const processQuery = async (text: string, inputType: 'voice' | 'text') => {
-    console.log(`📝 [Process] processQuery() called with inputType: ${inputType}`);
+    addDebugLog(`📝 Обработка запроса (${inputType})`);
     console.log(`📝 [Process] Query text: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
     
     if (!text.trim()) return;
 
-    // 1. Update Transcript (User)
-    const userMsg: ChatMessage = {
-        id: Date.now().toString(),
-        role: 'user',
-        text: text,
-        timestamp: new Date(),
-        inputType
-    };
-    setMessages(prev => [...prev, userMsg]);
+    // 1. Update Transcript (User) - only for text mode (voice already added in runVoiceConversation)
+    if (inputType === 'text') {
+      const userMsg: ChatMessage = {
+          id: Date.now().toString(),
+          role: 'user',
+          text: text,
+          timestamp: new Date(),
+          inputType
+      };
+      setMessages(prev => [...prev, userMsg]);
+    }
 
     // 2. Send to n8n (Processing)
     console.log("🔄 [Process] Sending to n8n...");
@@ -102,7 +114,7 @@ const App: React.FC = () => {
 
     try {
         const result = await sendQueryToN8n(text, tg?.initDataUnsafe?.user?.id?.toString(), inputType);
-        console.log(`🔄 [Process] n8n response received in ${performance.now() - n8nStart}ms`);
+        addDebugLog(`✅ Ответ получен за ${Math.round(performance.now() - n8nStart)}ms`);
         
         // 3. Update Transcript (Model)
         const botMsg: ChatMessage = {
@@ -117,15 +129,17 @@ const App: React.FC = () => {
         // 4. Speak Response (TTS)
         if (result.meta.shouldSpeak) {
             setAppState(AppState.SPEAKING);
+            addDebugLog(`🔊 TTS: gemini-2.5-flash-preview-tts (голос Kore)`);
             try {
                 // If in text mode, visualizer works on 'SPEAKING' state automatically via simulation
                 await voiceService.speak(result.aiResponse);
-            } catch (speakError) {
-                console.error("Speaking failed:", speakError);
+                addDebugLog(`✅ TTS завершён`);
+            } catch (speakError: any) {
+                addDebugLog(`❌ TTS ошибка: ${speakError?.message || speakError}`);
             }
         }
-    } catch (e) {
-        console.error("Processing Error", e);
+    } catch (e: any) {
+        addDebugLog(`❌ Ошибка обработки: ${e?.message || e}`);
         setAppState(AppState.ERROR);
         setTimeout(() => setAppState(AppState.IDLE), 3000);
         return;
@@ -203,13 +217,13 @@ const App: React.FC = () => {
 
   const runVoiceConversation = async () => {
     const flowStart = performance.now();
-    console.log("🎙️ [Flow] runVoiceConversation() started");
+    addDebugLog("🎙️ Начало записи голоса");
     
     try {
       // AudioContext is initialized/resumed here (direct click)
-      console.log("📊 [Flow] Starting audio analysis...");
+      addDebugLog("📊 Инициализация аудио анализа...");
       const audioAnalyser = await voiceService.startAudioAnalysis();
-      console.log(`📊 [Flow] Audio analysis ready: ${performance.now() - flowStart}ms`);
+      addDebugLog(`📊 Аудио готово: ${Math.round(performance.now() - flowStart)}ms`);
       
       if (audioAnalyser) {
         setAnalyser(audioAnalyser);
@@ -219,25 +233,37 @@ const App: React.FC = () => {
 
       let transcript = "";
       try {
-        console.log("👂 [Flow] Starting listen()...");
+        addDebugLog("👂 Запуск распознавания речи (Live API)...");
         const listenStart = performance.now();
         transcript = await voiceService.listen();
-        console.log(`👂 [Flow] listen() completed in ${performance.now() - listenStart}ms`);
-        console.log(`👂 [Flow] Transcript received: "${transcript}"`);
-      } catch (err) {
-        console.warn("Speech recognition error:", err);
+        addDebugLog(`👂 Распознавание завершено за ${Math.round(performance.now() - listenStart)}ms`);
+        addDebugLog(`📝 Транскрипт: "${transcript}"`);
+      } catch (err: any) {
+        addDebugLog(`❌ Ошибка распознавания: ${err?.message || err}`);
       }
 
       voiceService.stopAudioAnalysis();
       setAnalyser(null);
+      setRealtimeTranscript(""); // Clear real-time display
 
       if (!transcript) {
-        console.log("⚠️ [Flow] Empty transcript, returning to IDLE");
+        addDebugLog("⚠️ Пустой транскрипт, возврат в IDLE");
         setAppState(AppState.IDLE);
         return;
       }
 
-      console.log(`✅ [Flow] Voice recognition completed in ${performance.now() - flowStart}ms total`);
+      addDebugLog(`✅ Голос распознан за ${Math.round(performance.now() - flowStart)}ms`);
+      
+      // Add user's transcript to chat BEFORE processing
+      const userMsg: ChatMessage = {
+        id: Date.now().toString() + '_user',
+        role: 'user',
+        text: transcript,
+        timestamp: new Date(),
+        inputType: 'voice'
+      };
+      setMessages(prev => [...prev, userMsg]);
+      
       await processQuery(transcript, 'voice');
 
     } catch (e) {
@@ -472,6 +498,39 @@ const App: React.FC = () => {
               ? "Голосовой ввод недоступен. Используйте текстовый режим."
               : "Разрешите доступ к микрофону для голосового ввода или используйте текст.")}
          </div>
+      )}
+      
+      {/* Debug Panel Toggle Button (bottom-right) */}
+      <button
+        onClick={() => setShowDebugPanel(!showDebugPanel)}
+        className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-full bg-purple-600/80 hover:bg-purple-500 text-white font-mono text-xs flex items-center justify-center shadow-lg backdrop-blur-sm border border-purple-400/30 transition-all"
+        aria-label="Toggle Debug Panel"
+      >
+        {showDebugPanel ? '✕' : '🐛'}
+      </button>
+      
+      {/* Debug Panel (Telegram Mini Apps console replacement) */}
+      {showDebugPanel && (
+        <div className="fixed bottom-20 right-4 w-[90vw] max-w-md h-64 bg-black/95 border border-purple-500/50 rounded-lg shadow-2xl z-40 flex flex-col">
+          <div className="px-3 py-2 bg-purple-900/50 border-b border-purple-500/30 flex justify-between items-center">
+            <span className="text-purple-300 font-mono text-xs font-bold">🐛 Debug Logs</span>
+            <button 
+              onClick={() => setDebugLogs([])}
+              className="text-purple-400 hover:text-white text-xs font-mono px-2 py-1 rounded bg-purple-800/50 hover:bg-purple-700"
+            >
+              Очистить
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 font-mono text-xs text-green-400 space-y-1">
+            {debugLogs.length === 0 ? (
+              <div className="text-gray-500 italic">Логи появятся здесь...</div>
+            ) : (
+              debugLogs.map((log, idx) => (
+                <div key={idx} className="break-words">{log}</div>
+              ))
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
