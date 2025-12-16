@@ -163,10 +163,8 @@ export class GeminiLiveService {
         },
         
         // Enable input transcription (for user's speech)
-        // According to docs: need to specify model for transcription
-        inputAudioTranscription: {
-          model: "models/gemini-2.0-flash-exp"
-        },
+        // Official docs show empty object - model is inferred automatically
+        inputAudioTranscription: {},
         
         // Enable output transcription (for model's speech)
         outputAudioTranscription: {},
