@@ -357,7 +357,7 @@ export class VoiceService {
     return new Promise(async (resolve, reject) => {
       // Use Gemini Live API if enabled (real-time streaming)
       if (this.useLiveAPI && this.liveService) {
-        console.log("🎤 [STT] Using Gemini Live API (real-time streaming)");
+        console.log("🎤 [STT] Using Live API (model: gemini-2.5-flash-native-audio-preview-12-2025)");
         try {
           const transcript = await this.listenWithLiveAPI();
           const totalTime = performance.now() - startTime;
@@ -394,11 +394,11 @@ export class VoiceService {
       
       // Fallback to AudioContext + Gemini STT (batch mode)
       try {
-        console.log("🎤 [STT] Starting Gemini STT (batch mode)...");
+        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash)...");
         const geminiStart = performance.now();
-        const transcript = await this.listenWithGemini();
+        transcript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
-        console.log(`🎤 [STT] Gemini STT setup completed in ${geminiTime.toFixed(0)}ms`);
+        console.log(`🎤 [STT] Gemini STT (gemini-2.5-flash) setup completed in ${geminiTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
         console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
         resolve(transcript);
@@ -633,7 +633,7 @@ export class VoiceService {
     console.log(`🤖 [Gemini API] transcribeWithGemini() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
     
     try {
-      console.log("🤖 [Gemini API] Sending request to gemini-2.5-flash...");
+      console.log("🤖 [Gemini API] Sending transcription request (model: gemini-2.5-flash)...");
       const apiStart = performance.now();
       
       const response = await this.ai.models.generateContent({
@@ -851,6 +851,7 @@ export class VoiceService {
     if (!this.audioContext) return;
 
     try {
+        console.log("🔊 [TTS] Generating speech (model: gemini-2.5-flash-preview-tts, voice: Kore)...");
         const response = await this.ai.models.generateContent({
           model: "gemini-2.5-flash-preview-tts",
           contents: [{ parts: [{ text }] }],

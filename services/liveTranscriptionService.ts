@@ -79,7 +79,7 @@ export class LiveTranscriptionService {
    * Connects to Gemini Live API and begins streaming audio from microphone
    */
   async start(callbacks: TranscriptionCallbacks): Promise<void> {
-    console.log("🚀 [LiveTranscription] Starting session...");
+    console.log(`🚀 [LiveTranscription] Starting session with ${this.MODEL}...`);
     
     // Check if MicrophoneManager has cached permission
     if (!microphoneManager.isReady()) {
@@ -147,7 +147,7 @@ export class LiveTranscriptionService {
         // Callbacks for Live API events
         callbacks: {
           onopen: () => {
-            console.log("✅ [LiveTranscription] Connection established");
+            console.log(`✅ [LiveTranscription] Connected to ${this.MODEL}`);
             this.isStreaming = true;
             
             // Start streaming audio to the API
@@ -178,7 +178,7 @@ export class LiveTranscriptionService {
 
       // Wait for connection to establish
       this.session = await this.sessionPromise;
-      console.log("✅ [LiveTranscription] Session ready");
+      console.log(`✅ [LiveTranscription] Session ready (model: ${this.MODEL})`);
 
     } catch (error: any) {
       console.error("❌ [LiveTranscription] Failed to start:", error);
