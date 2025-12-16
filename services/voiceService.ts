@@ -170,19 +170,45 @@ export class VoiceService {
 
     try {
       console.log("Requesting microphone access...");
+      
+      // Try with basic constraints first (better compatibility with Telegram WebView)
       this.stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        } 
+        audio: true  // Simplified constraints for Telegram Mini Apps
       });
+      
       this.microphonePermissionGranted = true;
-      console.log("Microphone access granted, stream cached");
+      console.log("✅ Microphone access granted, stream cached");
       return this.stream;
-    } catch (error) {
-      console.error("Microphone access denied:", error);
+    } catch (error: any) {
+      console.error("❌ Microphone access error:", error);
+      console.error("Error details:", {
+        name: error?.name,
+        message: error?.message,
+        constraint: error?.constraint
+      });
+      
+      // Specific error handling
+      if (error.name === 'NotReadableError') {
+        console.error("❌ NotReadableError: Microphone is already in use or hardware issue");
+        console.error("💡 This often happens in Telegram Mini Apps - try using text input instead");
+      } else if (error.name === 'NotAllowedError') {
+        console.error("❌ NotAllowedError: User denied microphone permission");
+      } else if (error.name === 'NotFoundError') {
+        console.error("❌ NotFoundError: No microphone device found");
+      } else if (error.name === 'OverconstrainedError') {
+        console.error("❌ OverconstrainedError: Microphone constraints not supported");
+        // Try again with no constraints
+        try {
+          console.log("🔄 Retrying with basic audio constraints...");
+          this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          this.microphonePermissionGranted = true;
+          console.log("✅ Microphone access granted on retry");
+          return this.stream;
+        } catch (retryError) {
+          console.error("❌ Retry failed:", retryError);
+        }
+      }
+      
       this.microphonePermissionGranted = false;
       return null;
     }

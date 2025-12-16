@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [isTextMode, setIsTextMode] = useState(false);
   const [inputText, setInputText] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Refs for stability in effects (Stale closure prevention)
@@ -173,9 +174,17 @@ const App: React.FC = () => {
        if (!voiceService.hasMicrophonePermission()) {
          const stream = await voiceService.requestMicrophoneAccess();
          if (!stream) {
+           console.warn("⚠️ Microphone access failed - this is common in Telegram Mini Apps");
+           setMicrophoneError("Микрофон недоступен в Telegram. Используйте текстовый ввод.");
            setShowSpeechWarning(true);
            tg?.HapticFeedback.notificationOccurred('warning');
-           setTimeout(() => setShowSpeechWarning(false), 5000);
+           
+           // Auto-switch to text mode
+           setTimeout(() => {
+             setShowSpeechWarning(false);
+             setIsTextMode(true);
+             setTimeout(() => textInputRef.current?.focus(), 100);
+           }, 3000);
            return;
          }
        }
@@ -440,9 +449,9 @@ const App: React.FC = () => {
       {/* Speech Recognition / Microphone Warning */}
       {showSpeechWarning && (
          <div className="absolute top-0 left-0 w-full p-4 bg-yellow-700/90 text-white text-center text-sm z-50 backdrop-blur-sm">
-            {voiceService.hasMicrophonePermission() 
+            {microphoneError || (voiceService.hasMicrophonePermission() 
               ? "Голосовой ввод недоступен. Используйте текстовый режим."
-              : "Разрешите доступ к микрофону для голосового ввода или используйте текст."}
+              : "Разрешите доступ к микрофону для голосового ввода или используйте текст.")}
          </div>
       )}
     </div>
