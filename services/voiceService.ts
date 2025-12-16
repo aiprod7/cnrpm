@@ -419,9 +419,10 @@ export class VoiceService {
       console.log(`📤 [Process] Combined ${this.recordedSamples.length} chunks in ${(performance.now() - combineStart).toFixed(0)}ms`);
       console.log(`📤 [Process] Audio: ${totalLength} samples, ${durationSec.toFixed(2)}s duration, ${sampleRate}Hz`);
 
-      // Check if audio is too short
-      if (durationSec < 0.5) {
-        console.log("⚠️ [Process] Audio too short (<0.5s), skipping transcription");
+      // Check if audio is too short (minimum 1.5 seconds for reliable transcription)
+      if (durationSec < 1.5) {
+        console.log(`⚠️ [Process] Audio too short (${durationSec.toFixed(2)}s < 1.5s), skipping transcription`);
+        console.log("💡 [Process] Please speak for at least 1.5 seconds for accurate recognition");
         return "";
       }
 
@@ -499,8 +500,19 @@ export class VoiceService {
         name: error?.name,
         message: error?.message,
         status: error?.status,
-        statusText: error?.statusText
+        statusText: error?.statusText,
+        code: error?.code
       });
+      
+      // User-friendly error messages
+      if (error?.message?.includes('API_KEY')) {
+        console.error("❌ API Key error: Please check DEFAULT_GEMINI_API_KEY is set correctly");
+      } else if (error?.status === 429 || error?.code === 429) {
+        console.error("❌ Rate limit exceeded: Too many requests to Gemini API");
+      } else if (error?.status === 403 || error?.code === 403) {
+        console.error("❌ Permission denied: Check API key permissions and quotas");
+      }
+      
       throw error;
     }
   }

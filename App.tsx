@@ -153,6 +153,10 @@ const App: React.FC = () => {
     if (appState === AppState.LISTENING) {
        console.log("🛑 [Button] Currently listening, stopping...");
        voiceService.stopListening();
+       voiceService.stopAudioAnalysis();
+       setAnalyser(null);
+       setAppState(AppState.PROCESSING);
+       tg?.HapticFeedback.impactOccurred('medium');
        return;
     }
     if (appState === AppState.IDLE) {
