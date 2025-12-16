@@ -411,10 +411,9 @@ export class VoiceService {
 
   /**
    * Listen using Gemini Live API (real-time streaming)
-   * Uses inputAudioTranscription for automatic STT
    */
   private async listenWithLiveAPI(): Promise<string> {
-    console.log("🔴 [Live API] Starting real-time streaming with inputAudioTranscription...");
+    console.log("🔴 [Live API] Starting real-time streaming...");
     
     return new Promise(async (resolve, reject) => {
       try {
@@ -427,15 +426,14 @@ export class VoiceService {
         this.liveTranscript = "";
         this.liveTranscriptResolve = resolve;
 
-        // Start streaming microphone audio
-        // inputAudioTranscription is enabled in setup, so we'll get transcripts automatically
+        // Start streaming microphone audio directly
+        // Note: inputAudioTranscription is configured in setup, no need for text instruction
         await this.liveService!.startStreaming();
         
-        console.log("✅ [Live API] Streaming started - inputAudioTranscription will capture speech");
-        console.log("💡 [Live API] Speak now, transcript will appear in real-time");
+        console.log("✅ [Live API] Streaming started - speak now!");
         
         // NOTE: The recording will continue until stopListening() is called
-        // The transcript will be accumulated via inputTranscription events
+        // The transcript will be accumulated in real-time via the onTranscript callback
         
       } catch (error) {
         console.error("❌ [Live API] Failed to start:", error);

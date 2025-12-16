@@ -334,6 +334,10 @@ export class GeminiLiveService {
       
       // Debug: log ALL message types to diagnose transcription issues
       console.log('📨 [Live API] Message type:', Object.keys(message).join(', '));
+      
+      // Log full message for debugging (first 500 chars)
+      const msgPreview = JSON.stringify(message).substring(0, 500);
+      console.log('📦 [Live API] Full message preview:', msgPreview);
 
       if (message.setupComplete) {
         console.log('✅ [Live API] Setup complete');
@@ -343,6 +347,7 @@ export class GeminiLiveService {
         
         // Debug: log all fields in serverContent to understand what's coming
         console.log('📦 [Live API] serverContent keys:', Object.keys(serverContent));
+        console.log('📦 [Live API] serverContent full:', JSON.stringify(serverContent).substring(0, 300));
         
         // Handle INPUT transcription (user's speech - real-time)
         // According to docs: msg.server_content.input_transcription.text
