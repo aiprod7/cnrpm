@@ -2,12 +2,22 @@
 
 ## 1. Обзор проекта
 
-**VoxLux** — это премиальное Telegram Mini App (TMA), представляющее собой голосового AI-ассистента с эстетикой "Black Minimalist". Приложение обеспечивает естественное взаимодействие с пользователем через голос или текст, используя внешнюю логику (n8n) для генерации ответов и передовые технологии синтеза речи от Google.
+**VoxLux** — это премиальное Telegram Mini App (TMA), представляющее собой голосового AI-ассистента с эстетикой "Black Minimalist". Приложение обеспечивает естественное взаимодействие с пользователем через голос или текст, используя **Gemini Live API** с нативным аудио-режимом для потоковой транскрибации в реальном времени.
 
 ### 1.1. Ключевой функционал (Реализовано)
 
+*   **Потоковая транскрибация в реальном времени:**
+    *   **Модель:** `gemini-2.5-flash-native-audio-preview` через SDK `live.connect()`
+    *   **Технология:** WebSocket-подобное соединение с минимальной задержкой
+    *   **Формат:** 16kHz PCM streaming audio
+    *   **Особенность:** Текст появляется в UI по мере произнесения (real-time)
+    *   **Сервис:** `services/liveTranscriptionService.ts`
+*   **Интеллектуальное кеширование разрешений:**
+    *   **MicrophoneManager:** Предотвращает повторные запросы доступа к микрофону
+    *   **Хранилище:** Telegram Storage API (primary) + localStorage (fallback)
+    *   **Результат:** Разрешение запрашивается один раз при первом запуске
 *   **Гибридный ввод:**
-    *   **Голос:** Распознавание речи через нативный Web Speech API (STT).
+    *   **Голос:** Live API для real-time STT, fallback на Web Speech API
     *   **Текст:** Полноценный UI для ввода текста с валидацией (проверка на наличие кириллицы). Используется нативная кнопка **MainButton** Telegram для отправки сообщения.
 *   **Визуализация:** Canvas-визуалайзер, реагирующий на амплитуду звука в реальном времени. Анимация меняется в зависимости от состояния (ожидание, запись, обработка, воспроизведение).
 *   **Синтез речи (TTS):** Эксклюзивное использование **Google Gemini TTS** (модель `gemini-2.5-flash-preview-tts`) для озвучивания ответов агента.
@@ -38,15 +48,21 @@ graph TD
 ### 2.2. Технологический стек
 
 *   **Frontend (Telegram Mini App):**
-    *   **Framework:** React 19 (через ES Modules).
+    *   **Framework:** React 19.2.3 (через ES Modules).
+    *   **Build Tool:** Vite 6.2.0
     *   **Styling:** Tailwind CSS (через CDN).
-    *   **API Client:** `@google/genai` (v1.33.0+).
+    *   **API Client:** `@google/genai` (v1.33.0+) для Live API и TTS.
     *   **Telegram Integration:** Telegram Web Apps JS SDK.
 *   **Backend Logic:**
     *   **Automation:** n8n (Webhook workflow).
 *   **Speech Services:**
-    *   **STT (Speech-to-Text):** Browser Native SpeechRecognition API.
-    *   **TTS (Text-to-Speech):** Google Gemini API (`gemini-2.5-flash-preview-tts`).
+    *   **STT (Speech-to-Text):** 
+        *   Primary: **Gemini Live API** (`gemini-2.5-flash-native-audio-preview`) через SDK `live.connect()`
+        *   Fallback: Browser Native SpeechRecognition API
+    *   **TTS (Text-to-Speech):** Google Gemini API (`gemini-2.5-flash-preview-tts`, голос Kore).
+*   **Permission Management:**
+    *   **MicrophoneManager:** Кеширование разрешений через Telegram Storage API + localStorage
+    *   **Автоинициализация:** Проверка разрешений при старте приложения
 
 ---
 

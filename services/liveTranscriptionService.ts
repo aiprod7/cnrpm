@@ -65,8 +65,8 @@ export class LiveTranscriptionService {
   private currentTranscript: string = "";
   
   // Model configuration
-  // Use the latest native audio preview model for transcription
-  private readonly MODEL = "gemini-2.5-flash-native-audio-preview";
+  // Use the December 2025 native audio preview model for best transcription quality
+  private readonly MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
   private readonly SAMPLE_RATE = 16000; // Required by Live API
 
   constructor(apiKey: string) {
