@@ -431,9 +431,19 @@ export class VoiceService {
         await this.liveService!.startStreaming();
         
         console.log("✅ [Live API] Streaming started - speak now!");
+        console.log("⏰ [Live API] Will auto-stop after 10 seconds of streaming");
         
-        // NOTE: The recording will continue until stopListening() is called
-        // The transcript will be accumulated in real-time via the onTranscript callback
+        // CRITICAL FIX: Auto-stop after 10 seconds
+        // Live API needs manual stop, but Promise was hanging forever
+        setTimeout(() => {
+          if (this.liveService?.isCurrentlyStreaming()) {
+            console.log("⏰ [Live API] Auto-stopping after 10 seconds");
+            this.stopListening();
+          }
+        }, 10000); // 10 seconds max recording time
+        
+        // NOTE: Promise will resolve when stopListening() is called
+        // Either by user clicking stop button or by auto-timeout above
         
       } catch (error) {
         console.error("❌ [Live API] Failed to start:", error);
