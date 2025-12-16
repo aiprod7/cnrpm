@@ -206,80 +206,61 @@ const App: React.FC = () => {
   };
 
   const runVoiceConversation = async () => {
-    addDebugLog("🚀 [GeminiLive] Подключение к unified model...");
+    const flowStart = performance.now();
+    addDebugLog("🎙️ Начало записи голоса");
     
     try {
-      // Connect to Gemini Live (Unified STT+TTS)
-      await geminiService.connect({
-        // Callback for transcript updates (both STT and TTS text)
-        onTranscriptUpdate: (text: string, isUser: boolean, isFinal: boolean) => {
-          if (!isFinal) {
-            // Real-time streaming (not final yet)
-            if (isUser) {
-              addDebugLog(`📝 [STT] "${text}"`);
-              setRealtimeTranscript(text);
-              setAppState(AppState.LISTENING);
-            } else {
-              addDebugLog(`💬 [TTS Text] "${text}"`);
-              setAppState(AppState.SPEAKING);
-            }
-          } else {
-            // Final message (turn complete)
-            addDebugLog(`✅ [${isUser ? 'User' : 'Model'}] Final: "${text}"`);
-            
-            // Add to chat
-            setMessages(prev => {
-              // Check if last message is same role (update it)
-              const lastMsg = prev[prev.length - 1];
-              if (lastMsg && lastMsg.role === (isUser ? 'user' : 'model') && !lastMsg.id.endsWith('_final')) {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...lastMsg,
-                  text: text,
-                  id: lastMsg.id + '_final'
-                };
-                return updated;
-              }
-              
-              // Create new message
-              return [...prev, {
-                id: Date.now().toString() + (isUser ? '_user' : '_model') + '_final',
-                role: isUser ? 'user' : 'model',
-                text: text,
-                timestamp: new Date(),
-                inputType: 'voice'
-              }];
-            });
-            
-            // Clear real-time preview after final
-            if (isUser) {
-              setRealtimeTranscript("");
-            }
-          }
-        },
-        
-        onClose: () => {
-          addDebugLog("🔌 [GeminiLive] Соединение закрыто");
-          setAppState(AppState.IDLE);
-          setAnalyser(null);
-          setRealtimeTranscript("");
-        },
-        
-        onError: (err: Error) => {
-          addDebugLog(`❌ [GeminiLive] Ошибка: ${err.message}`);
-          setAppState(AppState.ERROR);
-          setTimeout(() => setAppState(AppState.IDLE), 3000);
-        }
-      });
-
-      // Get analyser for visualizer
-      setAnalyser(geminiService.getAnalyserNode());
+      // AudioContext is initialized/resumed here (direct click)
+      addDebugLog("📊 Инициализация аудио анализа...");
+      const audioAnalyser = await voiceService.startAudioAnalysis();
+      addDebugLog(`📊 Аудио готово: ${Math.round(performance.now() - flowStart)}ms`);
+      
+      if (audioAnalyser) {
+        setAnalyser(audioAnalyser);
+      }
       setAppState(AppState.LISTENING);
       tg?.HapticFeedback.impactOccurred('medium');
-      addDebugLog("✅ [GeminiLive] Подключено, готово к разговору");
 
-    } catch (e: any) {
-      addDebugLog(`❌ [GeminiLive] Ошибка подключения: ${e.message}`);
+      let transcript = "";
+      try {
+        addDebugLog("👂 Запуск распознавания речи (Live API)...");
+        const listenStart = performance.now();
+        transcript = await voiceService.listen();
+        addDebugLog(`👂 Распознавание завершено за ${Math.round(performance.now() - listenStart)}ms`);
+        addDebugLog(`📝 Транскрипт: "${transcript}"`);
+      } catch (err: any) {
+        addDebugLog(`❌ Ошибка распознавания: ${err?.message || err}`);
+      }
+
+      voiceService.stopAudioAnalysis();
+      setAnalyser(null);
+      setRealtimeTranscript(""); // Clear real-time display
+
+      if (!transcript) {
+        addDebugLog("⚠️ Пустой транскрипт, возврат в IDLE");
+        setAppState(AppState.IDLE);
+        return;
+      }
+
+      addDebugLog(`✅ Голос распознан за ${Math.round(performance.now() - flowStart)}ms`);
+      
+      // Add user's transcript to chat BEFORE processing
+      const userMsg: ChatMessage = {
+        id: Date.now().toString() + '_user',
+        role: 'user',
+        text: transcript,
+        timestamp: new Date(),
+        inputType: 'voice'
+      };
+      setMessages(prev => [...prev, userMsg]);
+      
+      // Process through n8n
+      await processQuery(transcript, 'voice');
+
+    } catch (e) {
+      console.error("Voice Conversation Flow Error", e);
+      voiceService.stopAudioAnalysis();
+      setAnalyser(null);
       setAppState(AppState.ERROR);
       setTimeout(() => setAppState(AppState.IDLE), 3000);
     }

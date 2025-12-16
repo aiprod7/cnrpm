@@ -851,9 +851,9 @@ export class VoiceService {
     if (!this.audioContext) return;
 
     try {
-        console.log("🔊 [TTS] Generating speech (model: gemini-2.5-flash-preview-tts, voice: Kore)...");
+        console.log("🔊 [TTS] Generating speech (model: gemini-2.5-flash-native-audio-preview-12-2025, voice: Kore)...");
         const response = await this.ai.models.generateContent({
-          model: "gemini-2.5-flash-preview-tts",
+          model: "gemini-2.5-flash-native-audio-preview-12-2025",
           contents: [{ parts: [{ text }] }],
           config: {
             responseModalities: [Modality.AUDIO],
