@@ -57,6 +57,28 @@ export class GeminiLiveService {
   }
 
   /**
+   * Check if session is active (for external use)
+   */
+  public get isConnected(): boolean {
+    return this.sessionPromise !== null && this.session !== null;
+  }
+
+  /**
+   * Send text message to active Live session.
+   * Model will respond with audio stream (TTS).
+   */
+  public async sendText(text: string) {
+    if (!this.session) {
+      throw new Error("Live session is not active. Connect first.");
+    }
+    console.log(`📤 [GeminiLive] Sending text: "${text}"`);
+    // Send text as part of turn
+    // turnComplete: true tells model we finished our thought and expect a response
+    await this.session.send({ text, turnComplete: true });
+    console.log("✅ [GeminiLive] Text sent, waiting for audio response...");
+  }
+
+  /**
    * Get analyser node for audio visualization
    */
   public getAnalyserNode(): AnalyserNode | null {

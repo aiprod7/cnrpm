@@ -144,13 +144,42 @@ const App: React.FC = () => {
         };
         setMessages(prev => [...prev, botMsg]);
 
-        // 4. Speak Response (TTS)
+        // 4. Speak Response (TTS) via Live API
         if (result.meta.shouldSpeak) {
             setAppState(AppState.SPEAKING);
-            addDebugLog(`🔊 TTS: gemini-2.5-flash-preview-tts (голос Kore)`);
+            addDebugLog(`🔊 TTS: Gemini Live API (голос Kore)`);
             try {
-                // If in text mode, visualizer works on 'SPEAKING' state automatically via simulation
-                await voiceService.speak(result.aiResponse);
+                // Use Live API for TTS - connect if not already connected
+                if (!geminiService.isConnected) {
+                    addDebugLog(`📡 Подключение к Live API для TTS...`);
+                    await geminiService.connect({
+                        onTranscriptUpdate: (text, isUser, isFinal) => {
+                            // TTS response - we don't need to update transcript since we already have it
+                            if (!isUser && isFinal) {
+                                addDebugLog(`✅ TTS завершён`);
+                            }
+                        },
+                        onClose: () => {
+                            addDebugLog(`🔌 Live API соединение закрыто`);
+                            setAppState(AppState.IDLE);
+                            setAnalyser(null);
+                        },
+                        onError: (err) => {
+                            addDebugLog(`❌ Live API ошибка: ${err.message}`);
+                            setAppState(AppState.ERROR);
+                            setTimeout(() => setAppState(AppState.IDLE), 3000);
+                        }
+                    });
+                    setAnalyser(geminiService.getAnalyserNode());
+                }
+                
+                // Send text to Live API - it will respond with audio
+                await geminiService.sendText(result.aiResponse);
+                
+                // Wait a bit for audio to finish playing (estimated based on text length)
+                const estimatedDuration = Math.max(2000, result.aiResponse.length * 80); // ~80ms per char
+                await new Promise(resolve => setTimeout(resolve, estimatedDuration));
+                
                 addDebugLog(`✅ TTS завершён`);
             } catch (speakError: any) {
                 addDebugLog(`❌ TTS ошибка: ${speakError?.message || speakError}`);
