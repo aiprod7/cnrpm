@@ -2,15 +2,74 @@
 
 ## ✅ Текущая конфигурация
 
-### Модели в проекте (ОБНОВЛЕНО!)
-```typescript
-// 🎤 STT (Speech-to-Text): Распознавание речи пользователя
-model: "gemini-2.5-flash-native-audio-preview-12-2025"  // ✅ Live API (WebSocket)
-fallback: "gemini-2.5-flash"  // ✅ Batch mode (REST API)
+### 📊 Все модели в проекте VoxLux (ОБНОВЛЕНО v1.4.1!)
 
-// 🔊 TTS (Text-to-Speech): Озвучка ответов бота
-model: "gemini-2.5-flash-preview-tts"  // ✅ Voice: Kore (Russian-optimized)
+**Всего используется: 5 моделей Google Gemini**
+
+#### 1️⃣ Потоковая транскрибация (STT Primary) 🚀
+```typescript
+model: "gemini-2.5-flash-native-audio-preview-12-2025"
+purpose: "Real-time speech-to-text через Live API"
+protocol: "SDK live.connect() (WebSocket-подобный)"
+latency: "~100-300ms"
+format: "16kHz PCM streaming"
+file: "services/liveTranscriptionService.ts"
+status: "✅ АКТИВНАЯ (Primary)"
 ```
+
+#### 2️⃣ Batch транскрибация (STT Fallback) 📦
+```typescript
+model: "gemini-2.5-flash"
+purpose: "Fallback для STT когда Live API недоступен"
+protocol: "REST API"
+latency: "~1-2s"
+format: "WAV file upload (base64)"
+file: "services/voiceService.ts (transcribeWithGemini)"
+status: "✅ АКТИВНАЯ (Fallback)"
+```
+
+#### 3️⃣ Синтез речи (TTS) 🔊
+```typescript
+model: "gemini-2.5-flash-preview-tts"
+purpose: "Text-to-Speech (озвучка ответов AI)"
+protocol: "REST API"
+voice: "Kore (Russian-optimized, female)"
+latency: "~800ms"
+format: "24kHz PCM output"
+file: "services/voiceService.ts (speak)"
+status: "✅ АКТИВНАЯ"
+```
+
+#### 4️⃣ Вспомогательная модель (Transcription Model для Legacy Live API) 🔧
+```typescript
+model: "gemini-2.0-flash-exp"
+purpose: "Модель для inputAudioTranscription в старом WebSocket Live API"
+protocol: "WebSocket (legacy)"
+file: "services/geminiLiveService.ts (DEPRECATED)"
+status: "⚠️ LEGACY (не используется, заменена на SDK live.connect())"
+note: "Требовалась для native-audio-dialog модели, но больше не нужна"
+```
+
+#### 5️⃣ Legacy Live API модель (DEPRECATED) ❌
+```typescript
+model: "gemini-2.5-flash-native-audio-dialog"
+purpose: "Старая модель для WebSocket Live API"
+protocol: "WebSocket (ручная реализация)"
+file: "services/geminiLiveService.ts"
+status: "❌ DEPRECATED (заменена на SDK live.connect())"
+reason: "Проблемы с inputTranscription, заменена на SDK метод"
+```
+
+---
+
+### 🎯 Активные модели (3 шт):
+1. ✅ **gemini-2.5-flash-native-audio-preview-12-2025** - Live STT (Primary)
+2. ✅ **gemini-2.5-flash** - Batch STT (Fallback)
+3. ✅ **gemini-2.5-flash-preview-tts** - TTS (голос Kore)
+
+### 🗑️ Deprecated модели (2 шт):
+4. ⚠️ **gemini-2.0-flash-exp** - Legacy transcription helper
+5. ❌ **gemini-2.5-flash-native-audio-dialog** - Old WebSocket Live API
 
 **🎯 КРИТИЧЕСКОЕ ОБНОВЛЕНИЕ**: Проект переведен на **Gemini Live API** для real-time транскрипции!
 
@@ -675,10 +734,16 @@ try {
 5. Voice activity detection (VAD) для автостопа
 
 **Последнее обновление**: 16 декабря 2025  
-**Версия**: 1.2.0 (ветка `gemini`)  
-**Архитектура**: 
-- **STT**: Gemini Live API `gemini-2.5-flash-native-audio-preview-12-2025` (WebSocket) + Batch fallback
-- **TTS**: Gemini TTS API `gemini-2.5-flash-preview-tts` (REST, voice: Kore)
-- **Debug**: UI Debug Panel для отладки в Telegram Mini Apps (без доступа к консоли)
-**Версия**: 1.1.0 (ветка `gemini`)  
-**Архитектура**: Gemini Live API (WebSocket streaming) + Batch fallback
+**Версия**: 1.4.1 (ветка `gemini`)  
+
+**Архитектура (5 моделей, 3 активных):**
+- **STT Primary**: `gemini-2.5-flash-native-audio-preview-12-2025` (SDK live.connect(), real-time)
+- **STT Fallback**: `gemini-2.5-flash` (REST API, batch mode)
+- **TTS**: `gemini-2.5-flash-preview-tts` (REST API, voice: Kore)
+- **Legacy**: `gemini-2.0-flash-exp` (deprecated transcription helper)
+- **Legacy**: `gemini-2.5-flash-native-audio-dialog` (deprecated WebSocket model)
+
+**Дополнительно:**
+- **Permission Manager**: MicrophoneManager (Telegram Storage API + localStorage)
+- **Debug Panel**: UI логирование для Telegram Mini Apps
+- **Fallback Chain**: Live API → Web Speech API → Batch Gemini
