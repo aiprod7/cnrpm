@@ -115,7 +115,7 @@ export class VoiceService {
 
   constructor() {
     // Initialize Google GenAI
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.DEFAULT_GEMINI_API_KEY || '';
     console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
     this.ai = new GoogleGenAI({ apiKey });
     
@@ -668,3 +668,4 @@ export class VoiceService {
 }
 
 export const voiceService = new VoiceService();
+(window as any).voiceService = voiceService;

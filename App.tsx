@@ -327,7 +327,12 @@ const App: React.FC = () => {
         
         {/* Header */}
         <header className="px-6 pt-6 pb-2 flex justify-between items-center opacity-80">
-          <h1 className="text-xl font-light tracking-[0.2em] uppercase">VoxLux</h1>
+          <div className="flex flex-col">
+            <h1 className="text-xl font-light tracking-[0.2em] uppercase">VoxLux</h1>
+            <div className="text-[9px] text-gray-500 font-mono mt-0.5 tracking-tight">
+              {process.env.BRANCH_NAME} • {process.env.TTS_MODEL_NAME}
+            </div>
+          </div>
           <div className={`w-2 h-2 rounded-full transition-colors duration-500
             ${appState === AppState.LISTENING ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]' : 
               appState === AppState.PROCESSING ? 'bg-purple-500 animate-pulse' :
