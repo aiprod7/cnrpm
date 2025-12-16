@@ -333,7 +333,8 @@ export class GeminiLiveService {
       console.log('📨 [Live API] Message type:', Object.keys(message).join(', '));
 
       if (message.setupComplete) {
-        console.log('✅ [Live API] Setup complete'); 
+        console.log('✅ [Live API] Setup complete');
+      } 
       else if (message.serverContent) {
         const serverContent = message.serverContent;
         
