@@ -71,7 +71,7 @@ export class GeminiLiveService {
       model: "gemini-2.5-flash-native-audio-preview-12-2025",  // Latest model from docs
       apiKey: apiKey,
       systemInstruction: systemInstruction,
-      responseModalities: ["AUDIO", "TEXT"],
+      responseModalities: ["AUDIO"],  // Only AUDIO (docs forbid both TEXT and AUDIO)
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
@@ -163,7 +163,10 @@ export class GeminiLiveService {
         },
         
         // Enable input transcription (for user's speech)
-        inputAudioTranscription: {},
+        // According to docs: need to specify model for transcription
+        inputAudioTranscription: {
+          model: "models/gemini-2.0-flash-exp"
+        },
         
         // Enable output transcription (for model's speech)
         outputAudioTranscription: {},
@@ -179,8 +182,8 @@ export class GeminiLiveService {
           }
         },
         
-        // Response modalities
-        responseModalities: this.config.responseModalities || ["AUDIO", "TEXT"],
+        // Response modalities (docs: only ONE modality allowed, not both!)
+        responseModalities: this.config.responseModalities || ["AUDIO"],
         
         // Speech config (voice)
         speechConfig: this.config.speechConfig || {
