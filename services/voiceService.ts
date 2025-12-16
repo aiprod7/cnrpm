@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
+import { GeminiLiveService } from "./geminiLiveService";
 
 // Helpers for decoding Gemini PCM Audio
 function decode(base64: string) {
@@ -104,11 +105,17 @@ export class VoiceService {
   private microphone: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
   
-  // Audio recording for Gemini STT
+  // Audio recording for Gemini STT (Legacy batch mode)
   private scriptProcessor: ScriptProcessorNode | null = null;
   private recordedSamples: Float32Array[] = [];
   private isRecording: boolean = false;
   private recordingResolve: ((transcript: string) => void) | null = null;
+  
+  // Gemini Live API (Real-time streaming)
+  private liveService: GeminiLiveService | null = null;
+  private useLiveAPI: boolean = true; // Toggle between Live API and batch mode
+  private liveTranscript: string = "";
+  private liveTranscriptResolve: ((transcript: string) => void) | null = null;
   
   // Permission cache - to avoid repeated browser permission prompts
   private microphonePermissionGranted: boolean = false;
@@ -118,6 +125,13 @@ export class VoiceService {
     const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.DEFAULT_GEMINI_API_KEY || '';
     console.log("VoiceService init, API Key present:", !!apiKey, "Key length:", apiKey.length);
     this.ai = new GoogleGenAI({ apiKey });
+    
+    // Initialize Gemini Live API
+    if (this.useLiveAPI && apiKey) {
+      console.log("🚀 [VoiceService] Initializing Gemini Live API...");
+      this.liveService = new GeminiLiveService(apiKey);
+      this.setupLiveAPICallbacks();
+    }
     
     // Log available APIs
     console.log("MediaRecorder available:", typeof MediaRecorder !== 'undefined');
@@ -138,6 +152,42 @@ export class VoiceService {
     } else {
       console.log("SpeechRecognition API NOT available - using AudioContext + Gemini");
     }
+  }
+
+  /**
+   * Setup callbacks for Gemini Live API
+   */
+  private setupLiveAPICallbacks(): void {
+    if (!this.liveService) return;
+
+    this.liveService.onTranscript((text) => {
+      console.log("📝 [Live API] Real-time transcript:", text);
+      this.liveTranscript += text + " ";
+      
+      // Call external callback for UI updates
+      if (this.onRealtimeTranscriptCallback) {
+        this.onRealtimeTranscriptCallback(this.liveTranscript.trim());
+      }
+    });
+
+    this.liveService.onError((error) => {
+      console.error("❌ [Live API] Error:", error);
+    });
+
+    this.liveService.onConnected(() => {
+      console.log("✅ [Live API] Connected and ready");
+    });
+
+    this.liveService.onDisconnected(() => {
+      console.log("🔌 [Live API] Disconnected");
+    });
+  }
+  
+  // Callback for real-time transcript updates
+  private onRealtimeTranscriptCallback?: (transcript: string) => void;
+  
+  setOnRealtimeTranscript(callback: (transcript: string) => void): void {
+    this.onRealtimeTranscriptCallback = callback;
   }
 
   // Check microphone permission without prompting user
@@ -304,6 +354,21 @@ export class VoiceService {
     console.log("🎤 [STT] listen() called at", new Date().toISOString());
     
     return new Promise(async (resolve, reject) => {
+      // Use Gemini Live API if enabled (real-time streaming)
+      if (this.useLiveAPI && this.liveService) {
+        console.log("🎤 [STT] Using Gemini Live API (real-time streaming)");
+        try {
+          const transcript = await this.listenWithLiveAPI();
+          const totalTime = performance.now() - startTime;
+          console.log(`✅ [STT] Live API completed in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
+          resolve(transcript);
+          return;
+        } catch (error) {
+          console.error("❌ [STT] Live API failed, falling back to batch mode:", error);
+          // Fall through to batch mode
+        }
+      }
+      
       // Try Web Speech API first if available (more reliable when it works)
       if (this.recognition) {
         console.log("🎤 [STT] Trying Web Speech API first...");
@@ -326,9 +391,9 @@ export class VoiceService {
         console.log("🎤 [STT] Web Speech API not available, using Gemini directly");
       }
       
-      // Fallback to AudioContext + Gemini STT
+      // Fallback to AudioContext + Gemini STT (batch mode)
       try {
-        console.log("🎤 [STT] Starting Gemini STT...");
+        console.log("🎤 [STT] Starting Gemini STT (batch mode)...");
         const geminiStart = performance.now();
         const transcript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
@@ -339,6 +404,38 @@ export class VoiceService {
       } catch (error) {
         console.error("❌ [STT] Gemini STT failed:", error);
         resolve(""); // Return empty string on error
+      }
+    });
+  }
+
+  /**
+   * Listen using Gemini Live API (real-time streaming)
+   */
+  private async listenWithLiveAPI(): Promise<string> {
+    console.log("🔴 [Live API] Starting real-time streaming...");
+    
+    return new Promise(async (resolve, reject) => {
+      try {
+        // Connect to Live API
+        if (!this.liveService!.isConnected()) {
+          await this.liveService!.connect();
+        }
+
+        // Reset transcript
+        this.liveTranscript = "";
+        this.liveTranscriptResolve = resolve;
+
+        // Start streaming microphone audio
+        await this.liveService!.startStreaming();
+        
+        console.log("✅ [Live API] Streaming started - speak now!");
+        
+        // NOTE: The recording will continue until stopListening() is called
+        // The transcript will be accumulated in real-time via the onTranscript callback
+        
+      } catch (error) {
+        console.error("❌ [Live API] Failed to start:", error);
+        reject(error);
       }
     });
   }
@@ -587,7 +684,28 @@ export class VoiceService {
     const startTime = performance.now();
     console.log("⏹️ [Stop] stopListening() called");
     
-    // Stop AudioContext recording
+    // Stop Live API streaming if active
+    if (this.useLiveAPI && this.liveService?.isCurrentlyStreaming()) {
+      console.log("⏹️ [Stop] Stopping Live API streaming...");
+      this.liveService.stopStreaming();
+      
+      // Return accumulated transcript
+      if (this.liveTranscriptResolve) {
+        const finalTranscript = this.liveTranscript.trim();
+        console.log(`✅ [Stop] Live API transcript: "${finalTranscript}"`);
+        this.liveTranscriptResolve(finalTranscript);
+        this.liveTranscriptResolve = null;
+        this.liveTranscript = "";
+        
+        // Clear UI real-time display
+        if (this.onRealtimeTranscriptCallback) {
+          this.onRealtimeTranscriptCallback("");
+        }
+      }
+      return;
+    }
+    
+    // Stop AudioContext recording (batch mode)
     if (this.scriptProcessor && this.isRecording) {
       this.isRecording = false;
       this.scriptProcessor.disconnect();

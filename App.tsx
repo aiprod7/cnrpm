@@ -18,6 +18,7 @@ const App: React.FC = () => {
   const [inputText, setInputText] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [realtimeTranscript, setRealtimeTranscript] = useState<string>(""); // Live API real-time display
   const textInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Refs for stability in effects (Stale closure prevention)
@@ -25,6 +26,13 @@ const App: React.FC = () => {
   const hasGreetingPlayed = useRef(false);
 
   useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
+
+  // Setup real-time transcript callback for Live API
+  useEffect(() => {
+    voiceService.setOnRealtimeTranscript((transcript) => {
+      setRealtimeTranscript(transcript);
+    });
+  }, []);
 
   // Initialize Telegram WebApp & Greeting
   useEffect(() => {
@@ -399,41 +407,52 @@ const App: React.FC = () => {
                 </div>
             ) : (
                 /* Voice Input UI */
-                <div className="flex items-center justify-center space-x-6 w-full max-w-xs mx-auto animate-fadeIn">
-                     {/* Text Mode Toggle */}
-                    <button
-                        onClick={toggleTextMode}
-                        className="p-4 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white hover:scale-105 active:scale-95 transition-all"
-                        aria-label="Switch to Text Mode"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-                        </svg>
-                    </button>
+                <div className="flex flex-col items-center justify-center w-full max-w-xs mx-auto animate-fadeIn space-y-3">
+                    {/* Real-time Transcript Display (Live API) */}
+                    {appState === AppState.LISTENING && realtimeTranscript && (
+                        <div className="w-full bg-blue-500/20 backdrop-blur-sm rounded-lg p-3 border border-blue-400/30 animate-fadeIn">
+                            <p className="text-sm text-blue-100 text-center font-light">
+                                🎙️ {realtimeTranscript}
+                            </p>
+                        </div>
+                    )}
+                    
+                    <div className="flex items-center justify-center space-x-6 w-full">
+                         {/* Text Mode Toggle */}
+                        <button
+                            onClick={toggleTextMode}
+                            className="p-4 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white hover:scale-105 active:scale-95 transition-all"
+                            aria-label="Switch to Text Mode"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+                            </svg>
+                        </button>
 
-                    {/* Main Mic Button */}
-                    <button
-                        onClick={handleMicButton}
-                        disabled={appState === AppState.PROCESSING || appState === AppState.SPEAKING}
-                        className={`
-                            group relative px-8 py-4 rounded-full font-medium tracking-wide text-lg flex-1
-                            shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all overflow-hidden
-                            ${appState === AppState.LISTENING 
-                                ? 'bg-red-900/80 text-white border border-red-500/50 hover:bg-red-800' 
-                                : 'bg-white text-black hover:scale-105 active:scale-95'}
-                            ${(appState === AppState.PROCESSING || appState === AppState.SPEAKING) ? 'opacity-50 cursor-not-allowed' : ''}
-                        `}
-                    >
-                        <span className="relative z-10 whitespace-nowrap">
-                            {appState === AppState.LISTENING ? 'Stop' : 
-                            appState === AppState.PROCESSING ? 'Thinking...' :
-                            appState === AppState.SPEAKING ? 'Speaking...' :
-                            'Tap to Speak'}
-                        </span>
-                        {appState === AppState.IDLE && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
-                        )}
-                    </button>
+                        {/* Main Mic Button */}
+                        <button
+                            onClick={handleMicButton}
+                            disabled={appState === AppState.PROCESSING || appState === AppState.SPEAKING}
+                            className={`
+                                group relative px-8 py-4 rounded-full font-medium tracking-wide text-lg flex-1
+                                shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all overflow-hidden
+                                ${appState === AppState.LISTENING 
+                                    ? 'bg-red-900/80 text-white border border-red-500/50 hover:bg-red-800' 
+                                    : 'bg-white text-black hover:scale-105 active:scale-95'}
+                                ${(appState === AppState.PROCESSING || appState === AppState.SPEAKING) ? 'opacity-50 cursor-not-allowed' : ''}
+                            `}
+                        >
+                            <span className="relative z-10 whitespace-nowrap">
+                                {appState === AppState.LISTENING ? 'Stop' : 
+                                appState === AppState.PROCESSING ? 'Thinking...' :
+                                appState === AppState.SPEAKING ? 'Speaking...' :
+                                'Tap to Speak'}
+                            </span>
+                            {appState === AppState.IDLE && (
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
+                            )}
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
