@@ -3,7 +3,8 @@ import Background from './components/Background';
 import Visualizer from './components/Visualizer';
 import Transcript from './components/Transcript';
 import { TelegramWebApp, ChatMessage, AppState } from './types';
-import { voiceService } from './services/voiceService';
+import { voiceService } from './services/voiceService'; // Legacy - for text mode TTS
+import { geminiService } from './services/geminiService'; // NEW - Unified STT+TTS
 import { sendQueryToN8n } from './services/n8nService';
 import { GREETING_TEXT } from './constants';
 
@@ -183,110 +184,102 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Voice Handlers ---
+  // --- Voice Handlers (NEW: Unified Gemini Live) ---
   const handleMicButton = async () => {
-    console.log(`🎤 [Button] handleMicButton() clicked, current state: ${appState}`);
+    addDebugLog(`🎤 [Button] Нажата кнопка, состояние: ${appState}`);
     
-    // Request mic permission on first click (will only prompt once)
-    await requestMicPermission();
-    
-    if (appState === AppState.LISTENING) {
-       console.log("🛑 [Button] Currently listening, stopping...");
-       voiceService.stopListening();
-       voiceService.stopAudioAnalysis();
+    // 1. Stop mode (if already listening or speaking)
+    if (appState === AppState.LISTENING || appState === AppState.SPEAKING) {
+       addDebugLog("⏹️ [Button] Остановка Gemini Live...");
+       await geminiService.disconnect();
+       setAppState(AppState.IDLE);
        setAnalyser(null);
-       setAppState(AppState.PROCESSING);
+       setRealtimeTranscript("");
        tg?.HapticFeedback.impactOccurred('medium');
        return;
     }
+
+    // 2. Start mode (connect to Gemini Live)
     if (appState === AppState.IDLE) {
-       // Check if any speech recognition is supported (MediaRecorder or Web Speech API)
-       if (!voiceService.isSpeechRecognitionSupported()) {
-         console.warn("No speech recognition method available");
-         setShowSpeechWarning(true);
-         tg?.HapticFeedback.notificationOccurred('warning');
-         setTimeout(() => setShowSpeechWarning(false), 5000);
-         return;
-       }
-       
-       // Check if we have mic permission
-       if (!voiceService.hasMicrophonePermission()) {
-         const stream = await voiceService.requestMicrophoneAccess();
-         if (!stream) {
-           console.warn("⚠️ Microphone access failed - this is common in Telegram Mini Apps");
-           setMicrophoneError("Микрофон недоступен в Telegram. Используйте текстовый ввод.");
-           setShowSpeechWarning(true);
-           tg?.HapticFeedback.notificationOccurred('warning');
-           
-           // Auto-switch to text mode
-           setTimeout(() => {
-             setShowSpeechWarning(false);
-             setIsTextMode(true);
-             setTimeout(() => textInputRef.current?.focus(), 100);
-           }, 3000);
-           return;
-         }
-       }
-       
        await runVoiceConversation();
     }
   };
 
   const runVoiceConversation = async () => {
-    const flowStart = performance.now();
-    addDebugLog("🎙️ Начало записи голоса");
+    addDebugLog("🚀 [GeminiLive] Подключение к unified model...");
     
     try {
-      // AudioContext is initialized/resumed here (direct click)
-      addDebugLog("📊 Инициализация аудио анализа...");
-      const audioAnalyser = await voiceService.startAudioAnalysis();
-      addDebugLog(`📊 Аудио готово: ${Math.round(performance.now() - flowStart)}ms`);
-      
-      if (audioAnalyser) {
-        setAnalyser(audioAnalyser);
-      }
+      // Connect to Gemini Live (Unified STT+TTS)
+      await geminiService.connect({
+        // Callback for transcript updates (both STT and TTS text)
+        onTranscriptUpdate: (text: string, isUser: boolean, isFinal: boolean) => {
+          if (!isFinal) {
+            // Real-time streaming (not final yet)
+            if (isUser) {
+              addDebugLog(`📝 [STT] "${text}"`);
+              setRealtimeTranscript(text);
+              setAppState(AppState.LISTENING);
+            } else {
+              addDebugLog(`💬 [TTS Text] "${text}"`);
+              setAppState(AppState.SPEAKING);
+            }
+          } else {
+            // Final message (turn complete)
+            addDebugLog(`✅ [${isUser ? 'User' : 'Model'}] Final: "${text}"`);
+            
+            // Add to chat
+            setMessages(prev => {
+              // Check if last message is same role (update it)
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.role === (isUser ? 'user' : 'model') && !lastMsg.id.endsWith('_final')) {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  ...lastMsg,
+                  text: text,
+                  id: lastMsg.id + '_final'
+                };
+                return updated;
+              }
+              
+              // Create new message
+              return [...prev, {
+                id: Date.now().toString() + (isUser ? '_user' : '_model') + '_final',
+                role: isUser ? 'user' : 'model',
+                text: text,
+                timestamp: new Date(),
+                inputType: 'voice'
+              }];
+            });
+            
+            // Clear real-time preview after final
+            if (isUser) {
+              setRealtimeTranscript("");
+            }
+          }
+        },
+        
+        onClose: () => {
+          addDebugLog("🔌 [GeminiLive] Соединение закрыто");
+          setAppState(AppState.IDLE);
+          setAnalyser(null);
+          setRealtimeTranscript("");
+        },
+        
+        onError: (err: Error) => {
+          addDebugLog(`❌ [GeminiLive] Ошибка: ${err.message}`);
+          setAppState(AppState.ERROR);
+          setTimeout(() => setAppState(AppState.IDLE), 3000);
+        }
+      });
+
+      // Get analyser for visualizer
+      setAnalyser(geminiService.getAnalyserNode());
       setAppState(AppState.LISTENING);
       tg?.HapticFeedback.impactOccurred('medium');
+      addDebugLog("✅ [GeminiLive] Подключено, готово к разговору");
 
-      let transcript = "";
-      try {
-        addDebugLog("👂 Запуск распознавания речи (Live API)...");
-        const listenStart = performance.now();
-        transcript = await voiceService.listen();
-        addDebugLog(`👂 Распознавание завершено за ${Math.round(performance.now() - listenStart)}ms`);
-        addDebugLog(`📝 Транскрипт: "${transcript}"`);
-      } catch (err: any) {
-        addDebugLog(`❌ Ошибка распознавания: ${err?.message || err}`);
-      }
-
-      voiceService.stopAudioAnalysis();
-      setAnalyser(null);
-      setRealtimeTranscript(""); // Clear real-time display
-
-      if (!transcript) {
-        addDebugLog("⚠️ Пустой транскрипт, возврат в IDLE");
-        setAppState(AppState.IDLE);
-        return;
-      }
-
-      addDebugLog(`✅ Голос распознан за ${Math.round(performance.now() - flowStart)}ms`);
-      
-      // Add user's transcript to chat BEFORE processing
-      const userMsg: ChatMessage = {
-        id: Date.now().toString() + '_user',
-        role: 'user',
-        text: transcript,
-        timestamp: new Date(),
-        inputType: 'voice'
-      };
-      setMessages(prev => [...prev, userMsg]);
-      
-      await processQuery(transcript, 'voice');
-
-    } catch (e) {
-      console.error("Voice Conversation Flow Error", e);
-      voiceService.stopAudioAnalysis();
-      setAnalyser(null);
+    } catch (e: any) {
+      addDebugLog(`❌ [GeminiLive] Ошибка подключения: ${e.message}`);
       setAppState(AppState.ERROR);
       setTimeout(() => setAppState(AppState.IDLE), 3000);
     }
@@ -487,9 +480,9 @@ const App: React.FC = () => {
                         >
                             <span className="relative z-10 whitespace-nowrap">
                                 {appState === AppState.LISTENING ? 'Stop' : 
+                                appState === AppState.SPEAKING ? 'Interrupt' :
                                 appState === AppState.PROCESSING ? 'Thinking...' :
-                                appState === AppState.SPEAKING ? 'Speaking...' :
-                                'Tap to Speak'}
+                                'Start Live'}
                             </span>
                             {appState === AppState.IDLE && (
                                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
