@@ -395,11 +395,11 @@ export class VoiceService {
       
       // Fallback to AudioContext + Gemini STT (batch mode)
       try {
-        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash)...");
+        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash-native-audio-preview-12-2025)...");
         const geminiStart = performance.now();
         const geminiTranscript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
-        console.log(`🎤 [STT] Gemini STT (gemini-2.5-flash) setup completed in ${geminiTime.toFixed(0)}ms`);
+        console.log(`🎤 [STT] Gemini STT (gemini-2.5-flash-native-audio-preview-12-2025) setup completed in ${geminiTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
         console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${geminiTranscript}"`);
         resolve(geminiTranscript);
@@ -634,11 +634,11 @@ export class VoiceService {
     console.log(`🤖 [Gemini API] transcribeWithGemini() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
     
     try {
-      console.log("🤖 [Gemini API] Sending transcription request (model: gemini-2.5-flash)...");
+      console.log("🤖 [Gemini API] Sending transcription request (model: gemini-2.5-flash-native-audio-preview-12-2025)...");
       const apiStart = performance.now();
       
       const response = await this.ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash-native-audio-preview-12-2025",
         contents: [{
           parts: [
             {
