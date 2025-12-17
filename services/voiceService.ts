@@ -433,6 +433,51 @@ export class VoiceService {
   }
 
   /**
+   * Cancel current listen() operation - prevents parallel recordings
+   */
+  private cancelCurrentListen(): void {
+    console.log("🚫 [STT] Cancelling current listen operation...");
+    
+    // Stop recording immediately
+    this.isRecording = false;
+    
+    // Clear auto-stop timeout
+    if (this.autoStopTimeout) {
+      clearTimeout(this.autoStopTimeout);
+      this.autoStopTimeout = null;
+    }
+    
+    // Abort Web Speech API
+    if (this.recognition) {
+      try {
+        this.recognition.abort();
+      } catch (e) {
+        // Ignore - may not be running
+      }
+    }
+    
+    // Disconnect script processor
+    if (this.scriptProcessor) {
+      try {
+        this.scriptProcessor.disconnect();
+      } catch (e) {
+        // Ignore
+      }
+      this.scriptProcessor = null;
+    }
+    
+    // Clear recording data
+    this.recordedSamples = [];
+    this.recordingResolve = null;
+    
+    // Reset listening state
+    this.isListening = false;
+    this.currentListenReject = null;
+    
+    console.log("✅ [STT] Previous listen operation cancelled");
+  }
+
+  /**
    * Listen using Gemini Live Transcription API (native-audio-preview model with SDK)
    * Uses live.connect() for minimal latency streaming transcription
    */
