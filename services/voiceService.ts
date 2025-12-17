@@ -112,6 +112,7 @@ export class VoiceService {
   private recordedSamples: Float32Array[] = [];
   private isRecording: boolean = false;
   private recordingResolve: ((transcript: string) => void) | null = null;
+  private autoStopTimeout: number | null = null;
   
   // Gemini Live API (Real-time streaming)
   private liveService: GeminiLiveService | null = null;
@@ -553,7 +554,7 @@ export class VoiceService {
         console.log("🎙️ [Gemini STT] Will auto-stop after 10 seconds...");
         
         // Auto-stop recording after 10 seconds
-        setTimeout(() => {
+        this.autoStopTimeout = window.setTimeout(() => {
           if (this.isRecording) {
             console.log("⏰ [Gemini STT] Auto-stopping after 10 seconds");
             this.stopListening();
@@ -789,6 +790,13 @@ export class VoiceService {
     
     // Stop AudioContext recording (batch mode)
     if (this.scriptProcessor && this.isRecording) {
+      // Clear auto-stop timeout
+      if (this.autoStopTimeout !== null) {
+        clearTimeout(this.autoStopTimeout);
+        this.autoStopTimeout = null;
+        console.log("⏹️ [Stop] Auto-stop timeout cleared");
+      }
+      
       this.isRecording = false;
       this.scriptProcessor.disconnect();
       this.scriptProcessor = null;
