@@ -170,15 +170,15 @@ export class GeminiLiveService {
             await this.session.sendClientContent({
               turns: [{ role: "user", parts: [{ text }] }],
               turnComplete: true
-          console.log(`✅ [GeminiLive TTS] Текст отправлен через метод: ${method}`);
-          console.log(`🔊 [GeminiLive TTS] Ожидание аудио ответа от модели...\n`);
-          return;if (method === 'send') {
+            });
+          } else if (method === 'send') {
             // @google/genai SDK format
             await this.session.send({ text });
           } else {
             await this.session[method](text);
           }
-          console.log(`✅ [GeminiLive] Text sent via ${method}`);
+          console.log(`✅ [GeminiLive TTS] Текст отправлен через метод: ${method}`);
+          console.log(`🔊 [GeminiLive TTS] Ожидание аудио ответа от модели...\n`);
           return;
         } catch (err: any) {
           console.warn(`⚠️ [GeminiLive] ${method} failed:`, err.message);
