@@ -634,11 +634,11 @@ export class VoiceService {
     console.log(`🤖 [Gemini API] transcribeWithGemini() started, audio size: ${(base64Audio.length / 1024).toFixed(1)}KB`);
     
     try {
-      console.log("🤖 [Gemini API] Sending transcription request (model: gemini-2.5-flash-native-audio-preview-12-2025)...");
+      console.log("🤖 [Gemini API] Sending transcription request (model: gemini-2.5-flash)...");
       const apiStart = performance.now();
       
       const response = await this.ai.models.generateContent({
-        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: "gemini-2.5-flash",
         contents: [{
           parts: [
             {
@@ -724,6 +724,13 @@ export class VoiceService {
           resolve("");
         }
       };
+
+      // Abort any existing recognition session to prevent InvalidStateError
+      try {
+        this.recognition.abort();
+      } catch (abortError) {
+        // Ignore abort errors - recognition may not be running
+      }
 
       try {
         this.recognition.start();
