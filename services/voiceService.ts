@@ -114,6 +114,10 @@ export class VoiceService {
   private recordingResolve: ((transcript: string) => void) | null = null;
   private autoStopTimeout: number | null = null;
   
+  // Listen state management (prevent parallel recordings)
+  private isListening: boolean = false;
+  private currentListenReject: ((reason?: any) => void) | null = null;
+  
   // Gemini Live API (Real-time streaming)
   private liveService: GeminiLiveService | null = null;
   private liveTranscriptionService: LiveTranscriptionService | null = null;
@@ -355,7 +359,17 @@ export class VoiceService {
     const startTime = performance.now();
     console.log("🎤 [STT] listen() called at", new Date().toISOString());
     
+    // Prevent parallel recordings
+    if (this.isListening) {
+      console.warn("⚠️ [STT] Already listening, cancelling previous session...");
+      this.cancelCurrentListen();
+    }
+    
+    this.isListening = true;
+    
     return new Promise(async (resolve, reject) => {
+      // Store reject callback for cancellation
+      this.currentListenReject = reject;
       // Use Gemini Live API if enabled (real-time streaming)
       if (this.useLiveAPI && this.liveService) {
         console.log("🎤 [STT] Using Live API (model: gemini-2.5-flash-native-audio-preview-12-2025)");
@@ -363,6 +377,8 @@ export class VoiceService {
           const transcript = await this.listenWithLiveAPI();
           const totalTime = performance.now() - startTime;
           console.log(`✅ [STT] Live API completed in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
+          this.isListening = false;
+          this.currentListenReject = null;
           resolve(transcript);
           return;
         } catch (error) {
@@ -382,6 +398,8 @@ export class VoiceService {
           if (transcript) {
             const totalTime = performance.now() - startTime;
             console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms`);
+            this.isListening = false;
+            this.currentListenReject = null;
             resolve(transcript);
             return;
           }
@@ -395,16 +413,20 @@ export class VoiceService {
       
       // Fallback to AudioContext + Gemini STT (batch mode)
       try {
-        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash-native-audio-preview-12-2025)...");
+        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash)...");
         const geminiStart = performance.now();
         const geminiTranscript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
-        console.log(`🎤 [STT] Gemini STT (gemini-2.5-flash-native-audio-preview-12-2025) setup completed in ${geminiTime.toFixed(0)}ms`);
+        console.log(`🎤 [STT] Gemini STT (batch, gemini-2.5-flash) completed in ${geminiTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
         console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${geminiTranscript}"`);
+        this.isListening = false;
+        this.currentListenReject = null;
         resolve(geminiTranscript);
       } catch (error) {
         console.error("❌ [STT] Gemini STT failed:", error);
+        this.isListening = false;
+        this.currentListenReject = null;
         resolve(""); // Return empty string on error
       }
     });
@@ -533,15 +555,18 @@ export class VoiceService {
 
         let sampleCount = 0;
         this.scriptProcessor.onaudioprocess = (e) => {
-          if (this.isRecording) {
-            const inputData = e.inputBuffer.getChannelData(0);
-            this.recordedSamples.push(new Float32Array(inputData));
-            sampleCount++;
-            // Log every 10 chunks (~1 second at 4096 buffer)
-            if (sampleCount % 10 === 0) {
-              const duration = (this.recordedSamples.length * bufferSize / (this.audioContext?.sampleRate || 44100)).toFixed(1);
-              console.log(`🎙️ [Recording] ${duration}s recorded (${this.recordedSamples.length} chunks)`);
-            }
+          // Stop processing if listen was cancelled
+          if (!this.isListening || !this.isRecording) {
+            return;
+          }
+          
+          const inputData = e.inputBuffer.getChannelData(0);
+          this.recordedSamples.push(new Float32Array(inputData));
+          sampleCount++;
+          // Log every 10 chunks (~1 second at 4096 buffer)
+          if (sampleCount % 10 === 0) {
+            const duration = (this.recordedSamples.length * bufferSize / (this.audioContext?.sampleRate || 44100)).toFixed(1);
+            console.log(`🎙️ [Recording] ${duration}s recorded (${this.recordedSamples.length} chunks)`);
           }
         };
 
@@ -744,6 +769,11 @@ export class VoiceService {
   stopListening() {
     const startTime = performance.now();
     console.log("⏹️ [Stop] stopListening() called");
+    
+    // Cancel any pending listen operations first
+    if (this.isListening) {
+      this.cancelCurrentListen();
+    }
     
     // Stop Live Transcription Service if active (SDK live.connect())
     if (this.useLiveAPI && this.liveTranscriptionService?.isActive()) {
