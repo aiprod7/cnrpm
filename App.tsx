@@ -147,7 +147,8 @@ const App: React.FC = () => {
         // 4. Speak Response (TTS) via Live API
         if (result.meta.shouldSpeak) {
             setAppState(AppState.SPEAKING);
-            addDebugLog(`🔊 TTS: Gemini Live API (голос Kore)`);
+            addDebugLog(`🔊 TTS: gemini-2.5-flash-native-audio-preview-12-2025 (Kore)`);
+            addDebugLog(`📝 Текст для синтеза: "${result.aiResponse}"`);
             try {
                 // Use Live API for TTS - connect if not already connected
                 if (!geminiService.isConnected) {

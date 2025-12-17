@@ -68,7 +68,30 @@ export class GeminiLiveService {
    * Use this when you just need to speak text without listening
    */
   async connectForTTS(config: LiveConfig): Promise<any> {
-    console.log("🔌 [GeminiLive] Connecting for TTS only...");
+    const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
+    const SYSTEM_PROMPT = `КРИТИЧЕСКИ ВАЖНО: Ты - TTS движок (Text-to-Speech синтезатор).
+
+ТВОЯ ЕДИНСТВЕННАЯ ЗАДАЧА:
+- Произноси ДОСЛОВНО текст который тебе передают
+- НЕ добавляй НИЧЕГО от себя (приветствия, комментарии, пояснения)
+- НЕ интерпретируй текст
+- НЕ отвечай на вопросы в тексте
+- НЕ комментируй содержание
+- Работай как диктор/робот который просто читает текст
+
+Формат работы: Получил текст → озвучил ДОСЛОВНО → всё.
+Язык: Русский (используй голос Kore).`;
+
+    console.log("\n" + "=".repeat(80));
+    console.log("🔌 [GeminiLive TTS] ПОДКЛЮЧЕНИЕ К МОДЕЛИ");
+    console.log("=".repeat(80));
+    console.log(`📦 Модель: ${MODEL_NAME}`);
+    console.log(`🎤 Голос: Kore (Russian female voice)`);
+    console.log(`🔊 Sample Rate: 24kHz`);
+    console.log(`\n📝 СИСТЕМНЫЙ ПРОМПТ:`);
+    console.log("-".repeat(80));
+    console.log(SYSTEM_PROMPT);
+    console.log("-".repeat(80) + "\n");
     
     // Initialize output AudioContext only
     this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
@@ -83,7 +106,7 @@ export class GeminiLiveService {
 
     // Connect to Gemini Live API (TTS mode)
     this.sessionPromise = this.client.live.connect({
-      model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+      model: MODEL_NAME,
       config: {
         responseModalities: [Modality.AUDIO],
         outputAudioTranscription: {},
@@ -92,7 +115,7 @@ export class GeminiLiveService {
             prebuiltVoiceConfig: { voiceName: 'Kore' } 
           }
         },
-        systemInstruction: "Ты голосовой помощник. Просто озвучь текст который тебе передают, не добавляй ничего от себя. Говори на русском языке.",
+        systemInstruction: SYSTEM_PROMPT,
       },
       callbacks: {
         onopen: () => {
@@ -126,8 +149,15 @@ export class GeminiLiveService {
     if (!this.session) {
       throw new Error("Live session is not active. Connect first.");
     }
-    console.log(`📤 [GeminiLive] Sending text: "${text}"`);
-    console.log(`📋 [GeminiLive] Available session methods:`, Object.getOwnPropertyNames(Object.getPrototypeOf(this.session)));
+    
+    console.log("\n" + "=".repeat(80));
+    console.log("📤 [GeminiLive TTS] ОТПРАВКА ТЕКСТА НА СИНТЕЗ");
+    console.log("=".repeat(80));
+    console.log(`📝 Текст для озвучки (${text.length} символов):`);
+    console.log("-".repeat(80));
+    console.log(text);
+    console.log("-".repeat(80));
+    console.log(`⏱️ Ожидаемая длительность: ~${Math.round(text.length * 0.1)}s\n`);
     
     // Try different methods based on SDK version
     const methods = ['sendClientContent', 'send', 'sendMessage', 'sendText'];
@@ -140,8 +170,9 @@ export class GeminiLiveService {
             await this.session.sendClientContent({
               turns: [{ role: "user", parts: [{ text }] }],
               turnComplete: true
-            });
-          } else if (method === 'send') {
+          console.log(`✅ [GeminiLive TTS] Текст отправлен через метод: ${method}`);
+          console.log(`🔊 [GeminiLive TTS] Ожидание аудио ответа от модели...\n`);
+          return;if (method === 'send') {
             // @google/genai SDK format
             await this.session.send({ text });
           } else {
