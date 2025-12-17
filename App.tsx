@@ -254,7 +254,7 @@ const App: React.FC = () => {
 
       let transcript = "";
       try {
-        addDebugLog("👂 Запуск распознавания речи (Live API)...");
+        addDebugLog("👂 STT: gemini-2.5-flash-native-audio-preview-12-2025 (Kore)");
         const listenStart = performance.now();
         transcript = await voiceService.listen();
         addDebugLog(`👂 Распознавание завершено за ${Math.round(performance.now() - listenStart)}ms`);

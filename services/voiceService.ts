@@ -370,26 +370,27 @@ export class VoiceService {
     return new Promise(async (resolve, reject) => {
       // Store reject callback for cancellation
       this.currentListenReject = reject;
-      // Use Gemini Live API if enabled (real-time streaming)
-      if (this.useLiveAPI && this.liveService) {
-        console.log("🎤 [STT] Using Live API (model: gemini-2.5-flash-native-audio-preview-12-2025)");
+      
+      // Use Gemini Live API for STT (native-audio-preview model - same as TTS)
+      if (this.useLiveAPI && this.liveTranscriptionService) {
+        console.log("🎤 [STT] Using Gemini Live API (model: gemini-2.5-flash-native-audio-preview-12-2025, voice: Kore)");
         try {
           const transcript = await this.listenWithLiveAPI();
           const totalTime = performance.now() - startTime;
-          console.log(`✅ [STT] Live API completed in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
+          console.log(`✅ [STT] Gemini Live API completed in ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
           this.isListening = false;
           this.currentListenReject = null;
           resolve(transcript);
           return;
         } catch (error) {
-          console.error("❌ [STT] Live API failed, falling back to batch mode:", error);
-          // Fall through to batch mode
+          console.error("❌ [STT] Gemini Live API failed, falling back to Web Speech:", error);
+          // Fall through to Web Speech API
         }
       }
       
-      // Try Web Speech API first if available (more reliable when it works)
+      // Fallback: Web Speech API (browser native)
       if (this.recognition) {
-        console.log("🎤 [STT] Trying Web Speech API first...");
+        console.log("🎤 [STT] Fallback: Using Web Speech API...");
         try {
           const webSpeechStart = performance.now();
           const transcript = await this.listenWithWebSpeech();
@@ -403,21 +404,21 @@ export class VoiceService {
             resolve(transcript);
             return;
           }
-          console.log("🎤 [STT] Web Speech API returned empty, falling back to Gemini");
+          console.log("🎤 [STT] Web Speech API returned empty, falling back to Gemini batch mode");
         } catch (error) {
-          console.warn("🎤 [STT] Web Speech API failed, trying Gemini STT:", error);
+          console.warn("🎤 [STT] Web Speech API failed, trying Gemini batch STT:", error);
         }
       } else {
-        console.log("🎤 [STT] Web Speech API not available, using Gemini directly");
+        console.log("🎤 [STT] Web Speech API not available, using Gemini batch mode");
       }
       
-      // Fallback to AudioContext + Gemini STT (batch mode)
+      // Last fallback: AudioContext + Gemini REST API (batch mode)
       try {
-        console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash)...");
+        console.log("🎤 [STT] Last fallback: Gemini batch STT (model: gemini-2.5-flash)...");
         const geminiStart = performance.now();
         const geminiTranscript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
-        console.log(`🎤 [STT] Gemini STT (batch, gemini-2.5-flash) completed in ${geminiTime.toFixed(0)}ms`);
+        console.log(`🎤 [STT] Gemini batch STT completed in ${geminiTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
         console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${geminiTranscript}"`);
         this.isListening = false;
