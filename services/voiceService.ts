@@ -396,12 +396,12 @@ export class VoiceService {
       try {
         console.log("🎤 [STT] Starting Gemini STT (batch mode, model: gemini-2.5-flash)...");
         const geminiStart = performance.now();
-        transcript = await this.listenWithGemini();
+        const geminiTranscript = await this.listenWithGemini();
         const geminiTime = performance.now() - geminiStart;
         console.log(`🎤 [STT] Gemini STT (gemini-2.5-flash) setup completed in ${geminiTime.toFixed(0)}ms`);
         const totalTime = performance.now() - startTime;
-        console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${transcript}"`);
-        resolve(transcript);
+        console.log(`✅ [STT] Total listen() time: ${totalTime.toFixed(0)}ms, result: "${geminiTranscript}"`);
+        resolve(geminiTranscript);
       } catch (error) {
         console.error("❌ [STT] Gemini STT failed:", error);
         resolve(""); // Return empty string on error
