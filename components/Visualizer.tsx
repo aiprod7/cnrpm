@@ -143,7 +143,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, state }) => {
             className="w-full h-full"
         />
         {state === AppState.IDLE && (
-            <div className="absolute pointer-events-none text-gray-500 text-xs tracking-widest uppercase opacity-50">
+            <div className="absolute pointer-events-none text-gray-400 text-sm tracking-widest uppercase opacity-70 font-light animate-pulse">
                 Tap to Speak
             </div>
         )}

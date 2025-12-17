@@ -398,10 +398,10 @@ const App: React.FC = () => {
         <header className="px-6 pt-6 pb-2 flex justify-between items-center opacity-80">
           <div className="flex flex-col">
             <h1 className="text-xl font-light tracking-[0.2em] uppercase">
-              VoxLux <span className="text-xs text-gray-600 font-normal">v{process.env.APP_VERSION}</span>
+              VoxLux
             </h1>
             <div className="text-[9px] text-gray-500 font-mono mt-0.5 tracking-tight">
-              {process.env.BRANCH_NAME} • {process.env.TTS_MODEL_NAME}
+              v{process.env.APP_VERSION}
             </div>
           </div>
           <div className={`w-2 h-2 rounded-full transition-colors duration-500
@@ -412,7 +412,9 @@ const App: React.FC = () => {
         </header>
 
         {/* Visualizer (Hero) - De-emphasize when in Text Mode */}
-        <div className={`flex-none h-[35vh] flex items-center justify-center transition-all duration-500 ${isTextMode ? 'opacity-30 scale-90 blur-sm' : 'opacity-100 scale-100'}`}>
+        <div className={`flex-none h-[35vh] flex items-center justify-center transition-all duration-500 ${isTextMode ? 'opacity-30 scale-90 blur-sm pointer-events-none' : 'opacity-100 scale-100 cursor-pointer'}`}
+             onClick={!isTextMode ? handleMicButton : undefined}
+        >
           <Visualizer 
             analyser={analyser} 
             state={appState} 
@@ -465,7 +467,7 @@ const App: React.FC = () => {
                         </div>
                     )}
                     
-                    <div className="flex items-center justify-center space-x-6 w-full">
+                    <div className="flex items-center justify-center w-full">
                          {/* Text Mode Toggle */}
                         <button
                             onClick={toggleTextMode}
@@ -473,32 +475,8 @@ const App: React.FC = () => {
                             aria-label="Switch to Text Mode"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M11 18h2" />
                             </svg>
-                        </button>
-
-                        {/* Main Mic Button */}
-                        <button
-                            onClick={handleMicButton}
-                            disabled={appState === AppState.PROCESSING || appState === AppState.SPEAKING}
-                            className={`
-                                group relative px-8 py-4 rounded-full font-medium tracking-wide text-lg flex-1
-                                shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all overflow-hidden
-                                ${appState === AppState.LISTENING 
-                                    ? 'bg-red-900/80 text-white border border-red-500/50 hover:bg-red-800' 
-                                    : 'bg-white text-black hover:scale-105 active:scale-95'}
-                                ${(appState === AppState.PROCESSING || appState === AppState.SPEAKING) ? 'opacity-50 cursor-not-allowed' : ''}
-                            `}
-                        >
-                            <span className="relative z-10 whitespace-nowrap">
-                                {appState === AppState.LISTENING ? 'Stop' : 
-                                appState === AppState.SPEAKING ? 'Interrupt' :
-                                appState === AppState.PROCESSING ? 'Thinking...' :
-                                'Start Live'}
-                            </span>
-                            {appState === AppState.IDLE && (
-                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] group-hover:animate-shine" />
-                            )}
                         </button>
                     </div>
                 </div>

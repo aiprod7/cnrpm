@@ -59,7 +59,7 @@ const Transcript: React.FC<TranscriptProps> = ({ messages, tg }) => {
                      </svg>
                 )}
                 <span className="text-[10px] text-gray-500">
-                    {msg.role === 'user' ? 'You' : 'VoxLux'}
+                    {msg.role === 'user' ? 'Вы' : 'VoxLux'}
                 </span>
             </div>
           </div>
