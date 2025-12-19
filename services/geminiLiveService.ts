@@ -8,8 +8,6 @@
 
 import { GoogleGenAI, Modality } from '@google/genai';
 import { microphoneManager } from './microphoneManager';
- * Documentation: https://ai.google.dev/gemini-api/docs/live
- */
 
 interface LiveAPIConfig {
   model: string;
@@ -236,14 +234,6 @@ export class GeminiLiveService {
       }
       
       console.log('✅ [Live API] Audio stream obtained from cache (no permission dialog)');
-        noiseSuppression: true
-      });
-      
-      if (!this.mediaStream) {
-        throw new Error('Failed to get audio stream from MicrophoneManager');
-      }
-      
-      console.log('✅ [Live API] Audio stream obtained from cache (no permission dialog)');
 
       // Create AudioContext
       this.audioContext = new AudioContext({ sampleRate: this.audioConfig.sampleRate });
@@ -262,7 +252,7 @@ export class GeminiLiveService {
         const pcmData = this.float32ToInt16(inputData);
         
         // Convert to base64
-        const base64Audio = this.arrayBufferToBase64(pcmData.buffer);
+        const base64Audio = this.arrayBufferToBase64(pcmData.buffer as ArrayBuffer);
 
         // Send to Live API
         this.sendAudioChunk(base64Audio);

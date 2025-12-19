@@ -232,11 +232,9 @@ export class VoiceService {
       
       if (this.stream) {
         console.log("✅ [VoiceService] Audio stream obtained from cache (no permission dialog)");
-        this.microphonePermissionGranted = true;
         return this.stream;
       } else {
         console.error("❌ [VoiceService] Failed to get audio stream from MicrophoneManager");
-        this.microphonePermissionGranted = false;
         return null;
       }
     } catch (error: any) {
@@ -245,10 +243,9 @@ export class VoiceService {
       // Пытаемся получить поток с повторными попытками
       try {
         console.log("🔄 [VoiceService] Retrying with fallback constraints...");
-        this.stream = await microphoneManager.getAudioStreamWithRetry(3, { audio: true });
+        this.stream = await microphoneManager.getAudioStreamWithRetry(3);
         
         if (this.stream) {
-          this.microphonePermissionGranted = true;
           console.log("✅ [VoiceService] Audio stream obtained on retry");
           return this.stream;
         }
@@ -256,14 +253,13 @@ export class VoiceService {
         console.error("❌ [VoiceService] Retry failed:", retryError);
       }
       
-      this.microphonePermissionGranted = false;
       return null;
     }
   }
 
   // Check if we have microphone permission (without prompting)
   hasMicrophonePermission(): boolean {
-    return microphoneManager.isReady() && microphoneManager.isStreamActive();
+    return microphoneManager.isReady() && microphoneManager.hasActiveStream();
   }
 
   // Check if speech recognition is supported (AudioContext always available)

@@ -1,6 +1,16 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
 import { microphoneManager } from './microphoneManager';
+import {
+  CURRENT_MODEL,
+  CURRENT_VOICE,
+  AUDIO_CONFIG,
+  TRANSCRIPTION_CONFIG,
+  THINKING_CONFIG,
+  VAD_CONFIG,
+  getUnifiedConfig,
+  getTTSOnlyConfig,
+} from './geminiLiveConfig';
 
 /**
  * Unified Gemini Live Service - Single Model for STT + TTS
@@ -69,8 +79,15 @@ export class GeminiLiveService {
    * Use this when you just need to speak text without listening
    */
   async connectForTTS(config: LiveConfig): Promise<any> {
-    const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
-    const SYSTEM_PROMPT = `КРИТИЧЕСКИ ВАЖНО: Ты - TTS движок (Text-to-Speech синтезатор).
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🔧 TTS НАСТРОЙКИ - Измените в geminiLiveConfig.ts
+    // ═══════════════════════════════════════════════════════════════════════
+    // CURRENT_MODEL - модель (gemini-2.5-flash-native-audio-preview-12-2025)
+    // CURRENT_VOICE - голос (Kore, Aoede, Charon и др.)
+    // TRANSCRIPTION_CONFIG.OUTPUT_TRANSCRIPTION.ENABLED - субтитры
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    const TTS_SYSTEM_PROMPT = `КРИТИЧЕСКИ ВАЖНО: Ты - TTS движок (Text-to-Speech синтезатор).
 
 ТВОЯ ЕДИНСТВЕННАЯ ЗАДАЧА:
 - Произноси ДОСЛОВНО текст который тебе передают
@@ -81,22 +98,20 @@ export class GeminiLiveService {
 - Работай как диктор/робот который просто читает текст
 
 Формат работы: Получил текст → озвучил ДОСЛОВНО → всё.
-Язык: Русский (используй голос Kore).`;
+Язык: Русский (используй голос ${CURRENT_VOICE}).`;
 
     console.log("\n" + "=".repeat(80));
     console.log("🔌 [GeminiLive TTS] ПОДКЛЮЧЕНИЕ К МОДЕЛИ");
     console.log("=".repeat(80));
-    console.log(`📦 Модель: ${MODEL_NAME}`);
-    console.log(`🎤 Голос: Kore (Russian female voice)`);
-    console.log(`🔊 Sample Rate: 24kHz`);
-    console.log(`\n📝 СИСТЕМНЫЙ ПРОМПТ:`);
-    console.log("-".repeat(80));
-    console.log(SYSTEM_PROMPT);
+    console.log(`📦 Модель: ${CURRENT_MODEL}`);
+    console.log(`🎤 Голос: ${CURRENT_VOICE}`);
+    console.log(`🔊 Sample Rate: ${AUDIO_CONFIG.OUTPUT.SAMPLE_RATE}Hz`);
+    console.log(`📝 Output Transcription: ${TRANSCRIPTION_CONFIG.OUTPUT_TRANSCRIPTION.ENABLED}`);
     console.log("-".repeat(80) + "\n");
     
     // Initialize output AudioContext only
     this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-      sampleRate: 24000 
+      sampleRate: AUDIO_CONFIG.OUTPUT.SAMPLE_RATE 
     });
     await this.outputAudioContext.resume();
     
@@ -105,22 +120,16 @@ export class GeminiLiveService {
     this.analyserNode.fftSize = 256;
     this.analyserNode.connect(this.outputAudioContext.destination);
 
+    // Get TTS config from geminiLiveConfig.ts
+    const ttsConfig = getTTSOnlyConfig(TTS_SYSTEM_PROMPT);
+
     // Connect to Gemini Live API (TTS mode)
     this.sessionPromise = this.client.live.connect({
-      model: MODEL_NAME,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        outputAudioTranscription: {},
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { voiceName: 'Kore' } 
-          }
-        },
-        systemInstruction: SYSTEM_PROMPT,
-      },
+      model: ttsConfig.model,
+      config: ttsConfig.config,
       callbacks: {
         onopen: () => {
-          console.log("✅ [GeminiLive TTS] Connected");
+          console.log(`✅ [GeminiLive TTS] Connected (${CURRENT_MODEL})`);
         },
         onmessage: (msg: LiveServerMessage) => this.handleServerMessage(msg, config),
         onclose: () => {
@@ -201,20 +210,43 @@ export class GeminiLiveService {
    * Connect to Gemini Live API (Unified STT+TTS)
    */
   async connect(config: LiveConfig) {
-    console.log("🔌 [GeminiLive] Connecting to unified model...");
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🔧 STT+TTS НАСТРОЙКИ - Измените в geminiLiveConfig.ts:
+    // ═══════════════════════════════════════════════════════════════════════
+    // CURRENT_MODEL - модель (gemini-2.5-flash-native-audio-preview-12-2025)
+    // CURRENT_VOICE - голос TTS (Kore, Aoede, Charon и др.)
+    // AUDIO_CONFIG.INPUT - настройки входного аудио (микрофон)
+    // AUDIO_CONFIG.OUTPUT - настройки выходного аудио (динамики)
+    // TRANSCRIPTION_CONFIG.INPUT_TRANSCRIPTION - STT (распознавание речи)
+    // TRANSCRIPTION_CONFIG.OUTPUT_TRANSCRIPTION - субтитры TTS
+    // VAD_CONFIG - Voice Activity Detection (определение речи)
+    // THINKING_CONFIG - "размышления" модели перед ответом
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    console.log("\n" + "=".repeat(80));
+    console.log("🔌 [GeminiLive] ПОДКЛЮЧЕНИЕ К UNIFIED STT+TTS");
+    console.log("=".repeat(80));
+    console.log(`📦 Модель: ${CURRENT_MODEL}`);
+    console.log(`🎤 Голос: ${CURRENT_VOICE}`);
+    console.log(`🔊 Input: ${AUDIO_CONFIG.INPUT.SAMPLE_RATE}Hz → Output: ${AUDIO_CONFIG.OUTPUT.SAMPLE_RATE}Hz`);
+    console.log(`📝 STT (input transcription): ${TRANSCRIPTION_CONFIG.INPUT_TRANSCRIPTION.ENABLED}`);
+    console.log(`💬 TTS captions (output transcription): ${TRANSCRIPTION_CONFIG.OUTPUT_TRANSCRIPTION.ENABLED}`);
+    console.log(`🧠 Thinking budget: ${THINKING_CONFIG.THINKING_BUDGET} tokens`);
+    console.log(`🎙️ VAD enabled: ${VAD_CONFIG.ENABLED}`);
+    console.log("-".repeat(80) + "\n");
     
     // 1. Initialize Audio Contexts
     this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-      sampleRate: 16000 
+      sampleRate: AUDIO_CONFIG.INPUT.SAMPLE_RATE 
     });
     this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-      sampleRate: 24000 
+      sampleRate: AUDIO_CONFIG.OUTPUT.SAMPLE_RATE 
     });
 
     // Wake up contexts (critical for iOS/Safari autoplay policies)
     await this.inputAudioContext.resume();
     await this.outputAudioContext.resume();
-    console.log("🔊 [GeminiLive] Audio contexts ready (Input: 16kHz, Output: 24kHz)");
+    console.log(`🔊 [GeminiLive] Audio contexts ready (Input: ${AUDIO_CONFIG.INPUT.SAMPLE_RATE}Hz, Output: ${AUDIO_CONFIG.OUTPUT.SAMPLE_RATE}Hz)`);
 
     // 2. Setup visualizer analyser
     this.analyserNode = this.outputAudioContext.createAnalyser();
@@ -225,11 +257,11 @@ export class GeminiLiveService {
     // 3. Get microphone access through MicrophoneManager
     console.log("🎤 [GeminiLive] Getting audio stream from MicrophoneManager...");
     const stream = await microphoneManager.getAudioStream({
-      channelCount: 1,
-      sampleRate: 16000,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
+      channelCount: AUDIO_CONFIG.INPUT.CHANNELS,
+      sampleRate: AUDIO_CONFIG.INPUT.SAMPLE_RATE,
+      echoCancellation: AUDIO_CONFIG.INPUT.ECHO_CANCELLATION,
+      noiseSuppression: AUDIO_CONFIG.INPUT.NOISE_SUPPRESSION,
+      autoGainControl: AUDIO_CONFIG.INPUT.AUTO_GAIN_CONTROL,
     });
     
     if (!stream) {
@@ -238,37 +270,18 @@ export class GeminiLiveService {
     
     console.log("✅ [GeminiLive] Audio stream obtained from cache (no permission dialog)");
 
-    // 4. Connect to Gemini Live API with unified model
+    // 4. Get unified config from geminiLiveConfig.ts
+    const unifiedConfig = getUnifiedConfig(SYSTEM_INSTRUCTION);
+
+    // 5. Connect to Gemini Live API with unified model
     console.log("📡 [GeminiLive] Establishing WebSocket connection...");
     this.sessionPromise = this.client.live.connect({
-      // ✅ Unified model for both STT and TTS
-      model: 'gemini-2.5-flash-native-audio-preview-12-2025',
-      
-      config: {
-        // Request AUDIO response (enables TTS)
-        responseModalities: [Modality.AUDIO], 
-        
-        // Enable input transcription (STT) - shows what user said
-        inputAudioTranscription: {}, 
-        
-        // Enable output transcription (Captions) - shows model's text
-        outputAudioTranscription: {},
-        
-        // Voice configuration for TTS
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { 
-              voiceName: 'Kore' // Russian-optimized female voice
-            } 
-          }
-        },
-        
-        systemInstruction: SYSTEM_INSTRUCTION,
-      },
+      model: unifiedConfig.model,
+      config: unifiedConfig.config,
       
       callbacks: {
         onopen: () => {
-          console.log("✅ [GeminiLive] Connected (model: gemini-2.5-flash-native-audio-preview-12-2025)");
+          console.log(`✅ [GeminiLive] Connected (model: ${CURRENT_MODEL})`);
           // Start streaming microphone audio
           this.startAudioInputStreaming(stream);
         },
@@ -347,8 +360,8 @@ export class GeminiLiveService {
           try {
             session.sendRealtimeInput({
               media: {
-                mimeType: "audio/pcm;rate=16000",
-                data: this.arrayBufferToBase64(pcm16.buffer)
+                mimeType: AUDIO_CONFIG.INPUT.MIME_TYPE,
+                data: this.arrayBufferToBase64(pcm16.buffer as ArrayBuffer)
               }
             });
           } catch (err) {
@@ -515,7 +528,7 @@ export class GeminiLiveService {
 
   /**
    * Decode Gemini audio response (Base64 PCM) to AudioBuffer
-   * Gemini returns raw PCM 24kHz Int16 (no WAV headers)
+   * Gemini returns raw PCM Int16 at OUTPUT sample rate (no WAV headers)
    */
   private async decodeAudioData(base64: string, ctx: AudioContext): Promise<AudioBuffer> {
     // Decode base64 to binary
@@ -529,8 +542,12 @@ export class GeminiLiveService {
     // Convert to Int16Array (PCM format)
     const dataInt16 = new Int16Array(bytes.buffer);
     
-    // Create AudioBuffer (1 channel, 24kHz sample rate)
-    const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
+    // Create AudioBuffer (1 channel, OUTPUT sample rate)
+    const buffer = ctx.createBuffer(
+      AUDIO_CONFIG.OUTPUT.CHANNELS, 
+      dataInt16.length, 
+      AUDIO_CONFIG.OUTPUT.SAMPLE_RATE
+    );
     const channelData = buffer.getChannelData(0);
     
     // Convert Int16 to Float32 (WebAudio format)

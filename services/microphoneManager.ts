@@ -355,7 +355,7 @@ export class MicrophoneManager {
   /**
    * Проверяем, активен ли аудио поток
    */
-  isStreamActive(): boolean {
+  hasActiveStream(): boolean {
     return this.isStreamActive && this.audioStream !== null;
   }
 
