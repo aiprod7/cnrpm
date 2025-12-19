@@ -3,6 +3,11 @@
  * Real-time audio streaming with WebSocket connection
  * 
  * Model: gemini-live-2.5-flash-native-audio
+ * Live API documentation: https://ai.google.dev/gemini-api/docs/live
+ */
+
+import { GoogleGenAI, Modality } from '@google/genai';
+import { microphoneManager } from './microphoneManager';
  * Documentation: https://ai.google.dev/gemini-api/docs/live
  */
 
@@ -217,16 +222,28 @@ export class GeminiLiveService {
     }
 
     try {
-      // Get microphone access with required format
-      console.log('🎤 [Live API] Requesting microphone access...');
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: this.audioConfig.sampleRate,
-          channelCount: this.audioConfig.channels,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
+      // Get microphone access through MicrophoneManager
+      console.log('🎤 [Live API] Getting audio stream from MicrophoneManager...');
+      this.mediaStream = await microphoneManager.getAudioStream({
+        sampleRate: this.audioConfig.sampleRate,
+        channelCount: this.audioConfig.channels,
+        echoCancellation: true,
+        noiseSuppression: true
       });
+      
+      if (!this.mediaStream) {
+        throw new Error('Failed to get audio stream from MicrophoneManager');
+      }
+      
+      console.log('✅ [Live API] Audio stream obtained from cache (no permission dialog)');
+        noiseSuppression: true
+      });
+      
+      if (!this.mediaStream) {
+        throw new Error('Failed to get audio stream from MicrophoneManager');
+      }
+      
+      console.log('✅ [Live API] Audio stream obtained from cache (no permission dialog)');
 
       // Create AudioContext
       this.audioContext = new AudioContext({ sampleRate: this.audioConfig.sampleRate });

@@ -1,5 +1,6 @@
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
+import { microphoneManager } from './microphoneManager';
 
 /**
  * Unified Gemini Live Service - Single Model for STT + TTS
@@ -221,17 +222,21 @@ export class GeminiLiveService {
     this.analyserNode.connect(this.outputAudioContext.destination);
     console.log("📊 [GeminiLive] Analyser connected for visualization");
 
-    // 3. Get microphone access
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        channelCount: 1,
-        sampleRate: 16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      } 
+    // 3. Get microphone access through MicrophoneManager
+    console.log("🎤 [GeminiLive] Getting audio stream from MicrophoneManager...");
+    const stream = await microphoneManager.getAudioStream({
+      channelCount: 1,
+      sampleRate: 16000,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
     });
-    console.log("🎤 [GeminiLive] Microphone access granted");
+    
+    if (!stream) {
+      throw new Error('Failed to get audio stream from MicrophoneManager');
+    }
+    
+    console.log("✅ [GeminiLive] Audio stream obtained from cache (no permission dialog)");
 
     // 4. Connect to Gemini Live API with unified model
     console.log("📡 [GeminiLive] Establishing WebSocket connection...");

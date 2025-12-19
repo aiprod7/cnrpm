@@ -219,50 +219,41 @@ export class VoiceService {
     }
 
     try {
-      console.log("🎤 [VoiceService] Requesting microphone stream...");
+      console.log("🎤 [VoiceService] Getting audio stream from MicrophoneManager...");
       
-      // Request microphone stream (permission already cached by MicrophoneManager)
-      this.stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 16000,
-          channelCount: 1
-        }
+      // Используем кэшированный поток из MicrophoneManager
+      this.stream = await microphoneManager.getAudioStream({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 16000,
+        channelCount: 1
       });
       
-      console.log("✅ [VoiceService] Microphone stream created");
-      return this.stream;
+      if (this.stream) {
+        console.log("✅ [VoiceService] Audio stream obtained from cache (no permission dialog)");
+        this.microphonePermissionGranted = true;
+        return this.stream;
+      } else {
+        console.error("❌ [VoiceService] Failed to get audio stream from MicrophoneManager");
+        this.microphonePermissionGranted = false;
+        return null;
+      }
     } catch (error: any) {
-      console.error("❌ [VoiceService] Microphone stream error:", error);
-      console.error("Error details:", {
-        name: error?.name,
-        message: error?.message,
-        constraint: error?.constraint
-      });
+      console.error("❌ [VoiceService] Error getting audio stream:", error);
       
-      // Specific error handling
-      if (error.name === 'NotReadableError') {
-        console.error("❌ NotReadableError: Microphone is already in use or hardware issue");
-        console.error("💡 This often happens in Telegram Mini Apps - try using text input instead");
-      } else if (error.name === 'NotAllowedError') {
-        console.error("❌ NotAllowedError: User denied microphone permission");
-        console.error("💡 Instructions:", microphoneManager.getPermissionInstructions());
-      } else if (error.name === 'NotFoundError') {
-        console.error("❌ NotFoundError: No microphone device found");
-      } else if (error.name === 'OverconstrainedError') {
-        console.error("❌ OverconstrainedError: Microphone constraints not supported");
-        // Try again with no constraints
-        try {
-          console.log("🔄 Retrying with basic audio constraints...");
-          this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Пытаемся получить поток с повторными попытками
+      try {
+        console.log("🔄 [VoiceService] Retrying with fallback constraints...");
+        this.stream = await microphoneManager.getAudioStreamWithRetry(3, { audio: true });
+        
+        if (this.stream) {
           this.microphonePermissionGranted = true;
-          console.log("✅ Microphone access granted on retry");
+          console.log("✅ [VoiceService] Audio stream obtained on retry");
           return this.stream;
-        } catch (retryError) {
-          console.error("❌ Retry failed:", retryError);
         }
+      } catch (retryError) {
+        console.error("❌ [VoiceService] Retry failed:", retryError);
       }
       
       this.microphonePermissionGranted = false;
@@ -272,7 +263,7 @@ export class VoiceService {
 
   // Check if we have microphone permission (without prompting)
   hasMicrophonePermission(): boolean {
-    return this.microphonePermissionGranted || (this.stream !== null && this.stream.active);
+    return microphoneManager.isReady() && microphoneManager.isStreamActive();
   }
 
   // Check if speech recognition is supported (AudioContext always available)

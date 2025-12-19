@@ -23,6 +23,27 @@ export class MicrophoneManager {
   private permissionGranted = false;
   private readonly STORAGE_KEY = 'voxlux_mic_permission';
   private readonly LOCAL_STORAGE_KEY = 'voxlux_mic_permission_local';
+  
+  // Кэшированный аудио поток - главное решение проблемы
+  private audioStream: MediaStream | null = null;
+  private audioContext: AudioContext | null = null;
+  private mediaSource: MediaStreamAudioSourceNode | null = null;
+  private isStreamActive = false;
+
+  /**
+   * Проверяем состояние разрешения микрофона через Permissions API
+   * @returns Promise<string> - 'granted', 'denied', 'prompt' или null если API не поддерживается
+   */
+  async checkMicrophonePermission(): Promise<string | null> {
+    try {
+      const result = await navigator.permissions.query({ name: 'microphone' });
+      console.log('🔍 [MicManager] Permission status:', result.state);
+      return result.state;
+    } catch (error) {
+      console.error('⚠️ [MicManager] Permissions API не поддерживается:', error);
+      return null;
+    }
+  }
 
   /**
    * Initialize microphone manager and check/request permission
@@ -30,13 +51,31 @@ export class MicrophoneManager {
    */
   async initialize(): Promise<boolean> {
     console.log('🎤 [MicManager] Initializing MicrophoneManager');
+    
+    // Инициализируем Telegram Web App SDK
+    this.initializeTelegramWebApp();
 
+    // Проверяем статус разрешения через Permissions API
+    const permissionStatus = await this.checkMicrophonePermission();
+    
+    if (permissionStatus === 'granted') {
+      console.log('✅ [MicManager] Permission already granted by browser');
+      this.permissionGranted = true;
+      await this.storePermission();
+      return true;
+    }
+    
     // Check if permission already cached
     const hasStoredPermission = await this.getStoredPermission();
-    if (hasStoredPermission) {
+    if (hasStoredPermission && permissionStatus !== 'denied') {
       console.log('✅ [MicManager] Permission found in storage (no dialog needed)');
       this.permissionGranted = true;
       return true;
+    }
+    
+    if (permissionStatus === 'denied') {
+      console.warn('❌ [MicManager] Permission denied by user');
+      return false;
     }
 
     // Request permission for the first time
@@ -171,18 +210,188 @@ export class MicrophoneManager {
   }
 
   /**
+   * Получаем кэшированный аудио поток (главное решение проблемы)
+   * Если поток уже получен, возвращаем его без нового запроса getUserMedia
+   * @param constraints - дополнительные ограничения аудио
+   * @returns Promise<MediaStream | null>
+   */
+  async getAudioStream(constraints?: MediaStreamConstraints['audio']): Promise<MediaStream | null> {
+    console.log('🎤 [MicManager] Getting audio stream...');
+    
+    // Если поток уже получен и активен, возвращаем его
+    if (this.audioStream && this.isStreamActive) {
+      console.log('✅ [MicManager] Returning cached audio stream (no new permission request)');
+      return this.audioStream;
+    }
+    
+    // Проверяем разрешение перед запросом
+    if (!this.permissionGranted) {
+      console.error('❌ [MicManager] Permission not granted, cannot get audio stream');
+      return null;
+    }
+    
+    try {
+      console.log('🔄 [MicManager] Creating new audio stream...');
+      
+      const audioConstraints = constraints || {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 16000,
+        channelCount: 1
+      };
+      
+      this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+        audio: audioConstraints
+      });
+      
+      this.isStreamActive = true;
+      
+      // Слушаем событие окончания потока
+      this.audioStream.addEventListener('ended', () => {
+        console.log('🛑 [MicManager] Audio stream ended');
+        this.isStreamActive = false;
+      });
+      
+      console.log('✅ [MicManager] New audio stream created and cached');
+      return this.audioStream;
+      
+    } catch (error: any) {
+      console.error('❌ [MicManager] Failed to get audio stream:', error);
+      this.audioStream = null;
+      this.isStreamActive = false;
+      
+      // Если ошибка разрешения, сбрасываем кэш
+      if (error.name === 'NotAllowedError') {
+        this.permissionGranted = false;
+        this.clearPermission();
+      }
+      
+      return null;
+    }
+  }
+  
+  /**
+   * Получаем аудио поток с повторными попытками
+   * @param maxRetries - максимальное количество попыток
+   * @param constraints - ограничения аудио
+   * @returns Promise<MediaStream | null>
+   */
+  async getAudioStreamWithRetry(maxRetries: number = 3, constraints?: MediaStreamConstraints['audio']): Promise<MediaStream | null> {
+    if (this.audioStream && this.isStreamActive) {
+      return this.audioStream;
+    }
+    
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const stream = await this.getAudioStream(constraints);
+        if (stream) {
+          return stream;
+        }
+      } catch (error) {
+        console.error(`❌ [MicManager] Attempt ${i + 1}/${maxRetries} failed:`, error);
+        
+        if (i === maxRetries - 1) {
+          throw new Error(`Не удалось получить доступ к микрофону: ${error}`);
+        }
+        
+        // Небольшая задержка перед повторной попыткой
+        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Инициализация Web Audio API с сохранением контекста
+   * @returns Promise<{audioContext: AudioContext, mediaSource: MediaStreamAudioSourceNode, stream: MediaStream} | null>
+   */
+  async initializeAudioRecording(): Promise<{audioContext: AudioContext, mediaSource: MediaStreamAudioSourceNode, stream: MediaStream} | null> {
+    try {
+      // Создаем контекст один раз
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        console.log('🎵 [MicManager] AudioContext created');
+      }
+      
+      // Получаем или переиспользуем поток
+      const stream = await this.getAudioStream();
+      if (!stream) {
+        console.error('❌ [MicManager] No audio stream available');
+        return null;
+      }
+      
+      // Подключаем к mediaSource если еще не подключено
+      if (!this.mediaSource) {
+        this.mediaSource = this.audioContext.createMediaStreamSource(stream);
+        console.log('🔗 [MicManager] MediaSource created and connected');
+      }
+      
+      return { audioContext: this.audioContext, mediaSource: this.mediaSource, stream };
+    } catch (error) {
+      console.error('❌ [MicManager] Error initializing audio recording:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Остановка записи без закрытия потока (для сохранения в рамках сессии)
+   * В отличие от полного закрытия, поток остается доступным
+   */
+  pauseRecording(): void {
+    console.log('⏸️ [MicManager] Pausing recording (stream remains active)');
+    // НЕ вызываем audioStream.getTracks().forEach(track => track.stop())
+    // во время активной сессии Mini App
+  }
+  
+  /**
    * Check if microphone is ready to use (permission granted)
    */
   isReady(): boolean {
     return this.permissionGranted;
   }
+  
+  /**
+   * Проверяем, активен ли аудио поток
+   */
+  isStreamActive(): boolean {
+    return this.isStreamActive && this.audioStream !== null;
+  }
 
+  /**
+   * Полная очистка аудио ресурсов (вызывать только при выходе из приложения)
+   */
+  cleanupAudio(): void {
+    console.log('🧹 [MicManager] Cleaning up audio resources');
+    
+    if (this.audioStream) {
+      this.audioStream.getTracks().forEach(track => {
+        track.stop();
+        console.log('🛑 [MicManager] Audio track stopped');
+      });
+      this.audioStream = null;
+    }
+    
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close();
+      console.log('🔒 [MicManager] AudioContext closed');
+    }
+    
+    this.audioContext = null;
+    this.mediaSource = null;
+    this.isStreamActive = false;
+  }
+  
   /**
    * Clear cached permission (for testing or if user revokes permission)
    */
   clearPermission(): void {
     console.log('🗑️ [MicManager] Clearing cached permission');
     this.permissionGranted = false;
+    
+    // Также очищаем аудио ресурсы
+    this.cleanupAudio();
     
     // Clear localStorage
     try {
@@ -204,6 +413,40 @@ export class MicrophoneManager {
     }
   }
 
+  /**
+   * Инициализация Telegram Web App SDK
+   */
+  private initializeTelegramWebApp(): void {
+    if (window.Telegram?.WebApp) {
+      console.log('📱 [MicManager] Initializing Telegram Web App');
+      window.Telegram.WebApp.ready();
+      
+      // Обрабатываем события изменения viewport
+      window.Telegram.WebApp.onEvent?.('viewportChanged', () => {
+        console.log('📱 [MicManager] Viewport changed');
+        // Переинициализируем аудио поток если нужно
+        if (!this.isStreamActive && this.permissionGranted) {
+          console.log('🔄 [MicManager] Re-checking audio stream after viewport change');
+        }
+      });
+      
+      // Обрабатываем событие скрытия приложения
+      window.Telegram.WebApp.onEvent?.('popupClosed', () => {
+        console.log('📱 [MicManager] Popup closed');
+        // НЕ очищаем ресурсы, так как пользователь может вернуться
+      });
+      
+      // Обрабатываем событие закрытия приложения
+      window.addEventListener('beforeunload', () => {
+        console.log('📱 [MicManager] App is closing - cleaning up audio resources');
+        this.cleanupAudio();
+      });
+      
+    } else {
+      console.log('⚠️ [MicManager] Telegram Web App not available');
+    }
+  }
+  
   /**
    * Get user-friendly error instruction
    */

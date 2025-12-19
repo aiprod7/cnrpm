@@ -8,6 +8,8 @@
  * Documentation: https://ai.google.dev/gemini-api/docs/live
  */
 
+import { microphoneManager } from './microphoneManager';
+
 import { GoogleGenAI, Modality } from "@google/genai";
 import { microphoneManager } from "./microphoneManager";
 
@@ -99,18 +101,21 @@ export class LiveTranscriptionService {
         sampleRate: this.SAMPLE_RATE 
       });
 
-      // 2. Get microphone access
-      console.log("🎤 [LiveTranscription] Requesting microphone access...");
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          sampleRate: this.SAMPLE_RATE,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+      // 2. Get microphone access through MicrophoneManager
+      console.log("🎤 [LiveTranscription] Getting audio stream from MicrophoneManager...");
+      this.mediaStream = await microphoneManager.getAudioStream({
+        sampleRate: this.SAMPLE_RATE,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
       });
-      console.log("✅ [LiveTranscription] Microphone access granted");
+      
+      if (!this.mediaStream) {
+        throw new Error('Failed to get audio stream from MicrophoneManager');
+      }
+      
+      console.log("✅ [LiveTranscription] Audio stream obtained from cache (no permission dialog)");
 
       // 3. Connect to Gemini Live API using SDK
       console.log("🔌 [LiveTranscription] Connecting to Gemini Live API...");
