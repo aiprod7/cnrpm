@@ -536,6 +536,8 @@ export class VoiceService {
         
       } catch (error) {
         console.error("❌ [Live Transcription] Failed to start:", error);
+        // CRITICAL: Reset listening flag on error
+        this.isListening = false;
         reject(error);
       }
     });
@@ -621,6 +623,8 @@ export class VoiceService {
 
       } catch (error) {
         console.error("❌ [Gemini STT] Failed to start recording:", error);
+        // CRITICAL: Reset listening flag on error
+        this.isListening = false;
         reject(error);
       }
     });
@@ -812,14 +816,20 @@ export class VoiceService {
     if (this.useLiveAPI && this.liveTranscriptionService?.isActive()) {
       console.log("⏹️ [Stop] Stopping Live Transcription Service...");
       
+      // Capture current resolve callback before async operation
+      const capturedResolve = this.liveTranscriptResolve;
+      const capturedTranscript = this.liveTranscript;
+      
+      // Clear immediately to prevent race condition with new listen() call
+      this.liveTranscriptResolve = null;
+      this.liveTranscript = "";
+      
       this.liveTranscriptionService.stop().then((finalTranscript) => {
         console.log(`✅ [Stop] Live Transcription stopped, transcript: "${finalTranscript}"`);
         
-        // Return accumulated transcript via promise resolver
-        if (this.liveTranscriptResolve) {
-          this.liveTranscriptResolve(finalTranscript);
-          this.liveTranscriptResolve = null;
-          this.liveTranscript = "";
+        // Return accumulated transcript via CAPTURED promise resolver (not current one!)
+        if (capturedResolve) {
+          capturedResolve(finalTranscript || capturedTranscript);
         }
         
         // Clear UI real-time display
@@ -831,9 +841,8 @@ export class VoiceService {
         console.log(`✅ [Stop] Total stopListening() time: ${totalTime.toFixed(0)}ms`);
       }).catch((error) => {
         console.error("❌ [Stop] Error stopping Live Transcription:", error);
-        if (this.liveTranscriptResolve) {
-          this.liveTranscriptResolve(this.liveTranscript.trim() || "");
-          this.liveTranscriptResolve = null;
+        if (capturedResolve) {
+          capturedResolve(capturedTranscript.trim() || "");
         }
       });
       return;
@@ -855,6 +864,9 @@ export class VoiceService {
           this.onRealtimeTranscriptCallback("");
         }
       }
+      
+      // CRITICAL: Ensure isListening is reset
+      this.isListening = false;
       return;
     }
     
@@ -889,6 +901,8 @@ export class VoiceService {
             this.recordingResolve(transcript);
             this.recordingResolve = null;
           }
+          // CRITICAL: Ensure isListening is reset
+          this.isListening = false;
           const totalTime = performance.now() - startTime;
           console.log(`✅ [Stop] Total stopListening() time: ${totalTime.toFixed(0)}ms`);
         }).catch((error) => {
@@ -897,12 +911,18 @@ export class VoiceService {
             this.recordingResolve("");
             this.recordingResolve = null;
           }
+          // CRITICAL: Ensure isListening is reset even on error
+          this.isListening = false;
         });
       } else {
         console.log("⚠️ [Stop] No recordingResolve callback set!");
+        // CRITICAL: Ensure isListening is reset
+        this.isListening = false;
       }
     } else {
       console.log("⚠️ [Stop] Not recording (scriptProcessor:", !!this.scriptProcessor, "isRecording:", this.isRecording, ")");
+      // CRITICAL: Ensure isListening is reset
+      this.isListening = false;
     }
     
     // Stop Web Speech API if active
