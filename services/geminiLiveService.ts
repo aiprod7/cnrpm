@@ -292,10 +292,9 @@ export class GeminiLiveService {
       this.audioContext = null;
     }
 
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
+    // Release media stream reference (but don't stop tracks - MicrophoneManager owns them)
+    // Stopping tracks here would break the cached stream for subsequent recordings
+    this.mediaStream = null;
 
     console.log('✅ [Live API] Stream stopped');
   }

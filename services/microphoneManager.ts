@@ -218,10 +218,24 @@ export class MicrophoneManager {
   async getAudioStream(constraints?: MediaStreamConstraints['audio']): Promise<MediaStream | null> {
     console.log('🎤 [MicManager] Getting audio stream...');
     
-    // Если поток уже получен и активен, возвращаем его
-    if (this.audioStream && this.isStreamActive) {
-      console.log('✅ [MicManager] Returning cached audio stream (no new permission request)');
-      return this.audioStream;
+    // Проверяем, активен ли кэшированный поток
+    // ВАЖНО: проверяем stream.active - треки могли быть остановлены внешним кодом
+    if (this.audioStream && this.isStreamActive && this.audioStream.active) {
+      // Дополнительная проверка: хотя бы один трек должен быть enabled и live
+      const hasActiveTracks = this.audioStream.getTracks().some(
+        track => track.enabled && track.readyState === 'live'
+      );
+      
+      if (hasActiveTracks) {
+        console.log('✅ [MicManager] Returning cached audio stream (no new permission request)');
+        return this.audioStream;
+      } else {
+        console.log('⚠️ [MicManager] Cached stream has no active tracks, creating new one...');
+        this.isStreamActive = false;
+      }
+    } else if (this.audioStream && (!this.audioStream.active || !this.isStreamActive)) {
+      console.log('⚠️ [MicManager] Cached stream is inactive, will create new one...');
+      this.isStreamActive = false;
     }
     
     // Проверяем разрешение перед запросом

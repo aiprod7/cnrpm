@@ -8,8 +8,6 @@
  * Documentation: https://ai.google.dev/gemini-api/docs/live
  */
 
-import { microphoneManager } from './microphoneManager';
-
 import { GoogleGenAI, Modality } from "@google/genai";
 import { microphoneManager } from "./microphoneManager";
 
@@ -223,11 +221,9 @@ export class LiveTranscriptionService {
       this.inputAudioContext = null;
     }
     
-    // Stop media stream
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
+    // Release media stream reference (but don't stop tracks - MicrophoneManager owns them)
+    // Stopping tracks here would break the cached stream for subsequent recordings
+    this.mediaStream = null;
     
     this.isStreaming = false;
     
@@ -415,10 +411,8 @@ export class LiveTranscriptionService {
       this.inputAudioContext = null;
     }
     
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
+    // Release media stream reference (but don't stop tracks - MicrophoneManager owns them)
+    this.mediaStream = null;
     
     this.session = null;
     this.sessionPromise = null;
